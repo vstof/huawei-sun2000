@@ -55,6 +55,21 @@ on the other hand, has no effect on an inverter that is already running.
 > TCP/IP protocol is enabled. Some dongle firmwares answer on slave id **1**
 > instead of **0**: the configuration has a field for that.
 
+### Special case: the inverter's built-in Wi-Fi (no dongle)
+
+Some older inverters serve Modbus TCP **directly**, through their built-in
+Wi-Fi module, on **port 6607** (port 502 on older firmwares) — this is what
+the FusionSolar app itself uses. Three points in that case:
+
+1. Access must be opened: in FusionSolar (**installer** account, "Device
+   Commissioning"), *Settings → Router connection settings* → enable
+   **"Local O&M"** (this toggle is somewhat buggy: try several times).
+2. Try **slave id 0 then 1** in the configuration: depending on the firmware,
+   one or the other answers.
+3. The inverter accepts **a single Modbus connection at a time**: the
+   integration keeps one persistent connection (like the Home Assistant
+   integration), but disconnect any other tool reading the inverter.
+
 ### Finding the inverter IP address
 
 - In the **FusionSolar** app: *Maintenance* → *Device information* /
@@ -99,7 +114,7 @@ Without Node (a Raspberry Pi for instance), with `jq` (`sudo apt install jq`):
 ```bash
 git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.1.0 .
+  -t huawei-sun2000-gladys:1.2.0 .
 ```
 
 > The `build:image` script adds the `io.gladysassistant.manifest` label: this
@@ -110,7 +125,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Go to **Integrations** → the **"Install an integration"** button (GitHub).
 2. Unfold the **Developer mode** link.
-3. Paste the image name: `huawei-sun2000-gladys:1.1.0`
+3. Paste the image name: `huawei-sun2000-gladys:1.2.0`
    (the manifest is read automatically from the image labels).
 4. Click **Install**.
 
@@ -150,7 +165,7 @@ dashboard. The power meter features (imported / exported energy) use the
 
 | Symptom | Likely cause |
 |---|---|
-| "Test the connection" times out | TCP/IP protocol not enabled in FusionSolar, or wrong IP |
+| "Test the connection" times out | TCP/IP protocol not enabled in FusionSolar, or wrong IP. Built-in Wi-Fi (no dongle): "Local O&M" not enabled, or wrong slave id (try 0 then 1) |
 | "Test the connection" fails with connection refused | Port 502 is not open: check the protocol activation |
 | Connection OK but values missing | Wrong slave id: try `1` in the configuration |
 | The grid meter publishes nothing | No Smart Power Sensor installed, or its status is not "normal" |
@@ -164,6 +179,11 @@ dashboard. The power meter features (imported / exported energy) use the
 - The dongle is a small embedded server: a refresh interval **below one minute
   brings nothing** and stresses the communication. The default (60 s) fits most
   uses.
+- The Modbus connection is **persistent**: a single TCP connection opened at
+  the first read, kept between polls (closed after 30 s of inactivity,
+  re-established automatically). Some firmwares — notably the built-in Wi-Fi
+  of older inverters (port 6607) — accept a single connection and ignore
+  clients that reconnect for every frame.
 - Huawei energies are kWh counters (gain 100): the daily yield resets at the
   inverter's local midnight.
 - The grid power of the meter follows the Gladys convention (*import > 0,

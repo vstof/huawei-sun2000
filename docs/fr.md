@@ -56,6 +56,23 @@ déjà en service.
 > sur l'adresse esclave **1** au lieu de **0** : le champ existe dans la
 > configuration pour ça.
 
+### Cas particulier : le Wi-Fi intégré de l'onduleur (sans dongle)
+
+Certains onduleurs plus anciens servent le Modbus TCP **directement**, par leur
+module Wi-Fi intégré, sur le **port 6607** (port 502 sur des firmwares plus
+anciens) — c'est d'ailleurs ce que l'application FusionSolar utilise. Trois
+points dans ce cas :
+
+1. L'accès doit être ouvert : dans FusionSolar (compte **installateur**,
+   « Commissionnement de l'appareil »), *Réglages → Paramètres de connexion
+   du routeur* → activer **« Local O&M » / « Maintenance locale »** (ce
+   réglage est parfois capricieux : réessayez plusieurs fois).
+2. Essayez l'**adresse esclave 0 puis 1** dans la configuration : selon le
+   firmware, l'un ou l'autre répond.
+3. L'onduleur n'accepte **qu'une seule connexion Modbus à la fois** :
+   l'intégration garde une connexion persistante (comme l'intégration Home
+   Assistant), mais débranchez tout autre outil qui lirait l'onduleur.
+
 ### Trouver l'adresse IP de l'onduleur
 
 - Dans l'application **FusionSolar** : *Maintenance* → *Informations
@@ -100,7 +117,7 @@ Sans Node (Raspberry Pi par exemple), avec `jq` (`sudo apt install jq`) :
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.1.0 .
+  -t huawei-sun2000-gladys:1.2.0 .
 ```
 
 > Le script `build:image` ajoute l'étiquette `io.gladysassistant.manifest` :
@@ -111,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
-3. Collez le nom d'image : `huawei-sun2000-gladys:1.1.0`
+3. Collez le nom d'image : `huawei-sun2000-gladys:1.2.0`
    (le manifeste est lu automatiquement dans les étiquettes de l'image).
 4. Cliquez sur **Installer**.
 
@@ -143,7 +160,7 @@ elles alimentent le suivi **réseau** du même tableau de bord.
 
 | Symptôme | Cause probable |
 |---|---|
-| « Tester la connexion » échoue en timeout | Protocole TCP/IP non activé dans FusionSolar, ou mauvaise IP |
+| « Tester la connexion » échoue en timeout | Protocole TCP/IP non activé dans FusionSolar, ou mauvaise IP. Wi-Fi intégré (sans dongle) : « Local O&M » pas activé, ou mauvaise adresse esclave (essayez 0 puis 1) |
 | « Tester la connexion » échoue en connection refused | Le port 502 n'est pas ouvert : vérifiez l'activation du protocole |
 | Connexion OK mais valeurs absentes | Mauvaise adresse esclave : essayez `1` dans la configuration |
 | Le compteur réseau ne publie rien | Aucun Smart Power Sensor installé, ou son statut n'est pas « normal » |
@@ -151,12 +168,16 @@ elles alimentent le suivi **réseau** du même tableau de bord.
 | La commande marche/arrêt échoue : « l'onduleur a refusé la commande » | La plupart des firmwares récents exigent des **droits installateur** pour ces écritures (exception Modbus « illegal data address ») : passez par FusionSolar avec le compte installateur, ou activez la configuration « autoriser les commandes à distance » côté installateur |
 | « Tester la connexion » ne répond plus le soir | L'onduleur est en veille sans irradiation : les registres restent lisibles, vérifiez plutôt le Wi-Fi du dongle |
 | Plusieurs intégrations se disputent le port 502 | Le dongle ne sert qu'**un seul maître Modbus** : ne lisez pas les registres depuis deux outils à la fois |
-
 ## Notes
 
 - Le dongle est un petit serveur embarqué : un intervalle de rafraîchissement
   **inférieur à la minute n'apporte rien** et fatigue la communication. Le
   défaut (60 s) convient à la grande majorité des usages.
+- La connexion Modbus est **persistante** : une seule connexion TCP ouverte à
+  la première lecture, conservée entre les cycles (fermée après 30 s
+  d'inactivité, rétablie automatiquement). Certains firmwares — notamment le
+  Wi-Fi intégré des onduleurs anciens (port 6607) — n'acceptent qu'une seule
+  connexion et ignorent les clients qui se reconnectent à chaque trame.
 - Les énergies Huawei sont des compteurs en kWh (gain 100) : la production du
   jour repart à zéro à minuit heure locale de l'onduleur.
 - La puissance réseau du compteur suit la convention Gladys

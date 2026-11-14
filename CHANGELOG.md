@@ -2,6 +2,21 @@
 
 All notable changes to this integration are documented here.
 
+## [1.2.0]
+
+### Changed
+
+- The Modbus client keeps **one persistent TCP connection** (opened on the
+  first exchange, closed after 30 s of inactivity, retried once on a fresh
+  connection after any failure). Some inverters — in particular the built-in
+  Wi-Fi module serving Modbus TCP on port 6607 — accept a single connection
+  and ignore clients that reconnect for every frame; a connection per frame
+  timed out on them. This matches the Home Assistant integration behavior.
+- The per-exchange timeout rises from 5 s to 10 s: the built-in Wi-Fi module
+  answers slowly.
+- Documentation for the "inverter built-in Wi-Fi" configuration (port 6607,
+  Local O&M enabled, slave id 0 or 1).
+
 ## [1.1.0]
 
 ### Added
