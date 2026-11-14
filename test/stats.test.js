@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { localDate, recordDaily, resetStats, setStatsDir, snapshot } from '../src/stats.js';
+import { localDate, recordDaily, resetStats, setStatsDir, snapshot, hourlyFor, dayTotal, monthTotal, yearTotal, daysOfMonth, monthsOfYear, dataBounds, addDays, dayDiff } from '../src/stats.js';
 
 const DAYS = ['2026-01-30', '2026-01-31', '2026-02-01'];
 
@@ -165,4 +165,108 @@ test('resetStats clears the in-memory store (test isolation)', async () => {
   setStatsDir(await tempDir());
   assert.equal((await snapshot()).date, null);
   await rm(dir, { recursive: true, force: true });
+});
+
+// --- Navigation accessors ---------------------------------------------------
+
+test('recordDaily books the hourly delta into the hour buckets', async () => {
+  const dir = await tempDir();
+  setStatsDir(dir);
+  const day = localDate(); // recent: the 40-day hourly retention keeps it
+  await recordDaily(day, 1.2, 1.2, 12);
+  await recordDaily(day, 2.0, 0.8, 13);
+  await recordDaily(day, 2.5, 0.5, 14);
+  const hourly = await hourlyFor(day);
+  assert.equal(hourly[12], 1.2);
+  assert.equal(hourly[13], 0.8);
+  assert.equal(hourly[14], 0.5);
+  assert.equal(hourly.filter((h) => h > 0).length, 3);
+  // A negative or zero delta books nothing.
+  await recordDaily(day, 2.4, -0.1, 15);
+  assert.equal((await hourlyFor(day))[15], 0);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('dayTotal resolves closed days, today and unknown days', async () => {
+  const dir = await tempDir();
+  setStatsDir(dir);
+  await recordDaily(DAYS[0], 3.5);
+  await recordDaily(DAYS[1], 5.0);
+  assert.equal(await dayTotal(DAYS[0]), 3.5, 'the closed day');
+  assert.equal(await dayTotal(DAYS[1]), 5.0, 'the open day');
+  assert.equal(await dayTotal('2020-01-01'), null, 'never observed');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('monthTotal and yearTotal follow the bucket + partial model', async () => {
+  const dir = await tempDir();
+  setStatsDir(dir);
+  await recordDaily(DAYS[0], 3.5); // 2026-01-30
+  await recordDaily(DAYS[1], 5.0); // 2026-01-31 closes 30
+  await recordDaily(DAYS[2], 2.0); // 2026-02-01 closes 31
+  assert.equal(await monthTotal('2026-01'), 8.5, 'the closed bucket');
+  assert.equal(await monthTotal('2026-02'), 2.0, 'the running month partial');
+  assert.equal(await monthTotal('2025-12'), null, 'never observed');
+  assert.equal(await yearTotal('2026'), 10.5);
+  assert.equal(await yearTotal('2025'), null);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('daysOfMonth and monthsOfYear list what was observed, sorted', async () => {
+  const dir = await tempDir();
+  setStatsDir(dir);
+  await recordDaily(DAYS[0], 3.5);
+  await recordDaily(DAYS[1], 5.0);
+  await recordDaily(DAYS[2], 2.0);
+  assert.deepEqual(
+    (await daysOfMonth('2026-01')).map((entry) => entry.date),
+    ['2026-01-30', '2026-01-31'],
+  );
+  assert.deepEqual(
+    (await monthsOfYear('2026')).map((entry) => entry.month),
+    ['2026-01', '2026-02'],
+  );
+  assert.equal((await daysOfMonth('2026-02')).length, 1, 'today only');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('dataBounds exposes the oldest recorded period (navigation clamp)', async () => {
+  const dir = await tempDir();
+  setStatsDir(dir);
+  await recordDaily(DAYS[0], 3.5, 3.5, 10);
+  await recordDaily(DAYS[1], 5.0);
+  const bounds = await dataBounds();
+  assert.equal(bounds.firstDay, DAYS[0]);
+  assert.equal(bounds.firstMonth, '2026-01');
+  assert.equal(bounds.firstYear, '2026');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('a version-1 stats file is migrated, its history kept', async () => {
+  const dir = await tempDir();
+  setStatsDir(dir);
+  const v1 = {
+    version: 1,
+    last_date: DAYS[1],
+    today_kwh: 5.0,
+    months: { '2026-01': 3.5 },
+    years: { 2026: 3.5 },
+    days: [{ date: DAYS[0], kwh: 3.5 }],
+  };
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(path.join(dir, 'huawei-sun2000-stats.json'), JSON.stringify(v1));
+  const stats = await snapshot();
+  assert.equal(stats.month, 8.5, 'the closed history survived the migration');
+  assert.equal(await dayTotal(DAYS[0]), 3.5);
+  assert.equal(await hourlyFor(DAYS[0]), null, 'no hourly profile in a v1 file');
+  await recordDaily(localDate(), 5.5, 0.5, 9);
+  assert.equal((await hourlyFor(localDate()))[9], 0.5, 'hourly recording starts after the migration');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('addDays and dayDiff compute over UTC days', async () => {
+  assert.equal(addDays('2026-01-31', 1), '2026-02-01');
+  assert.equal(addDays('2026-03-01', -1), '2026-02-28');
+  assert.equal(dayDiff('2026-01-30', '2026-02-01'), 2);
+  assert.equal(dayDiff('2026-02-01', '2026-01-30'), -2);
 });

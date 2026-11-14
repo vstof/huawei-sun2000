@@ -19,16 +19,29 @@
 // unreachable) are simply absent from the series — no value is fabricated.
 // The month and year totals are therefore only as complete as the reading
 // history since the stats file was created.
+//
+// Hourly detail (version 2 of the file): every poll also records the DELTA of
+// the daily register into the current hour bucket, which builds a production
+// profile per hour for each observed day. The energy accumulated before the
+// first poll of a day (mornings, or a full day after a restart) is attributed
+// to the hour of that first poll: it is the only honest place available, it
+// is marked here for what it is — an approximation for the hours we did not
+// observe.
 // -----------------------------------------------------------------------------
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 const FILE_NAME = 'huawei-sun2000-stats.json';
-// The rolling daily series keeps a margin above the 30 days the widget shows.
-const KEEP_DAYS = 40;
-// Month buckets older than the previous year are dropped (the file stays tiny).
-const KEEP_MONTHS = 24;
+// Per-day totals are kept ~13 months: the month widget navigates back to the
+// previous year, and the year widget needs every month of it.
+const KEEP_DAYS = 400;
+// Hourly detail is bulky and only useful to browse recent days.
+const KEEP_HOURS_DAYS = 40;
+// Month buckets: the running month, a full previous year, plus margin.
+const KEEP_MONTHS = 25;
+// Year buckets are a handful of numbers: everything is kept.
+const STORE_VERSION = 2;
 
 let store = null;
 let dataDir = '/data';
@@ -48,7 +61,7 @@ export function localDate(now = new Date()) {
 
 function emptyStore() {
   return {
-    version: 1,
+    version: STORE_VERSION,
     last_date: null,
     today_kwh: 0,
     // Buckets of CLOSED days, keyed 'YYYY-MM' and 'YYYY'.
@@ -56,6 +69,8 @@ function emptyStore() {
     years: {},
     // Closed days, oldest first: [{ date: 'YYYY-MM-DD', kwh }]
     days: [],
+    // Hourly profile per observed day: { 'YYYY-MM-DD': [24 kWh] }
+    hours: {},
   };
 }
 
@@ -85,6 +100,19 @@ async function ensureLoaded() {
     store.days = store.days.filter(
       (entry) => entry && typeof entry.date === 'string' && Number.isFinite(entry.kwh) && entry.kwh >= 0,
     );
+    // Migration: version 1 had no hourly profiles.
+    if (parsed.version !== STORE_VERSION) {
+      store.version = STORE_VERSION;
+      store.hours = {};
+    }
+    if (store.hours === null || typeof store.hours !== 'object' || Array.isArray(store.hours)) {
+      store.hours = {};
+    }
+    for (const [date, profile] of Object.entries(store.hours)) {
+      if (!Array.isArray(profile) || profile.length !== 24 || profile.some((h) => !Number.isFinite(h) || h < 0)) {
+        delete store.hours[date];
+      }
+    }
   } catch {
     // Missing (first run) or unreadable (hand-edited): start clean.
     store = emptyStore();
@@ -106,14 +134,30 @@ function addClosedDay(closedDate, kwh) {
   store.months[monthKey] = (store.months[monthKey] ?? 0) + kwh;
   store.years[yearKey] = (store.years[yearKey] ?? 0) + kwh;
   store.days.push({ date: closedDate, kwh });
-  if (store.days.length > KEEP_DAYS) {
-    store.days.splice(0, store.days.length - KEEP_DAYS);
+  // Prune the rolling series by DATE (a long offline gap must not drop the
+  // recent history a restart-free installation keeps accumulating).
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - KEEP_DAYS);
+  const cutoffDate = localDate(cutoff);
+  while (store.days.length > 0 && store.days[0].date < cutoffDate) {
+    store.days.shift();
   }
   // Prune stale month buckets.
   const oldestKeptMonth = monthKeyOfOffset(-KEEP_MONTHS);
   for (const key of Object.keys(store.months)) {
     if (key < oldestKeptMonth) {
       delete store.months[key];
+    }
+  }
+}
+
+function pruneHours() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - KEEP_HOURS_DAYS);
+  const cutoffDate = localDate(cutoff);
+  for (const key of Object.keys(store.hours)) {
+    if (key < cutoffDate) {
+      delete store.hours[key];
     }
   }
 }
@@ -128,8 +172,12 @@ function monthKeyOfOffset(offset) {
  * Record one reading of the daily-yield register (kWh). Call at every poll.
  * @param {string} date local date of the reading, YYYY-MM-DD
  * @param {number} kwh daily yield as read (>= 0)
+ * @param {number|null} [hourlyDelta] kWh produced since the previous poll,
+ *   to book into the current hour (an approximate attribution for the first
+ *   poll of a day: see the header). Nothing is recorded when null or <= 0.
+ * @param {number|null} [hour] local hour (0-23) of the reading
  */
-export async function recordDaily(date, kwh) {
+export async function recordDaily(date, kwh, hourlyDelta = null, hour = null) {
   const value = Number(kwh);
   if (!Number.isFinite(value) || value < 0) {
     return; // an invalid reading is not an error: the next poll will tell
@@ -148,6 +196,17 @@ export async function recordDaily(date, kwh) {
     addClosedDay(store.last_date, store.today_kwh);
     store.last_date = date;
     store.today_kwh = value;
+  }
+  // Hourly profile: book the delta of this poll into its hour bucket.
+  const delta = Number(hourlyDelta);
+  if (Number.isFinite(delta) && delta > 0 && Number.isInteger(hour) && hour >= 0 && hour <= 23) {
+    let profile = store.hours[date];
+    if (!Array.isArray(profile) || profile.length !== 24) {
+      profile = new Array(24).fill(0);
+      store.hours[date] = profile;
+    }
+    profile[hour] += delta;
+    pruneHours();
   }
   try {
     await persist();
@@ -199,4 +258,154 @@ export async function snapshot() {
 /** Forget everything (tests only). */
 export function resetStats() {
   store = null;
+}
+
+// --- Navigation accessors (the period widgets) --------------------------------
+// All async (lazy load), all honest: a period we never observed resolves to
+// null / an empty list, never an invented zero series.
+
+/** Add n days to a YYYY-MM-DD key (UTC math: no DST surprise). */
+export function addDays(dateKey, n) {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + n);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Add n months to a YYYY-MM key. */
+export function addMonths(monthKey, n) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1 + n, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Whole days between two YYYY-MM-DD keys (b - a). */
+export function dayDiff(a, b) {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+}
+
+/**
+ * The oldest period still in the store — the navigation clamps on it.
+ * @returns {Promise<{firstDay: string|null, firstMonth: string|null, firstYear: string|null}>}
+ */
+export async function dataBounds() {
+  const data = await ensureLoaded();
+  let firstDay = null;
+  for (const key of Object.keys(data.hours)) {
+    if (firstDay === null || key < firstDay) {
+      firstDay = key;
+    }
+  }
+  if (data.days.length > 0 && (firstDay === null || data.days[0].date < firstDay)) {
+    firstDay = data.days[0].date;
+  }
+  let firstMonth = null;
+  for (const key of [...Object.keys(data.months), ...Object.keys(data.hours), ...data.days.map((d) => d.date.slice(0, 7))]) {
+    if (firstMonth === null || key < firstMonth) {
+      firstMonth = key;
+    }
+  }
+  let firstYear = null;
+  for (const key of [...Object.keys(data.years), ...Object.keys(data.months).map((m) => m.slice(0, 4))]) {
+    if (firstYear === null || key < firstYear) {
+      firstYear = key;
+    }
+  }
+  return { firstDay, firstMonth, firstYear };
+}
+
+/**
+ * Total of ONE day: the closed bucket, today's partial, or null when the day
+ * was never observed.
+ * @param {string} dateKey YYYY-MM-DD
+ */
+export async function dayTotal(dateKey) {
+  const data = await ensureLoaded();
+  if (dateKey === data.last_date) {
+    return data.today_kwh;
+  }
+  const closed = data.days.find((entry) => entry.date === dateKey);
+  return closed ? closed.kwh : null;
+}
+
+/**
+ * Total of ONE month: bucket + partial for the running month, or null when
+ * nothing of that month was ever observed.
+ * @param {string} monthKey YYYY-MM
+ */
+export async function monthTotal(monthKey) {
+  const data = await ensureLoaded();
+  if (data.last_date === null) {
+    return null;
+  }
+  const bucket = data.months[monthKey];
+  if (bucket === undefined && !monthKey.startsWith(data.last_date.slice(0, 7))) {
+    return null;
+  }
+  if (monthKey === data.last_date.slice(0, 7)) {
+    return (bucket ?? 0) + data.today_kwh;
+  }
+  return bucket ?? null;
+}
+
+/**
+ * Total of ONE year, same model as the month.
+ * @param {string} yearKey YYYY
+ */
+export async function yearTotal(yearKey) {
+  const data = await ensureLoaded();
+  if (data.last_date === null) {
+    return null;
+  }
+  const bucket = data.years[yearKey];
+  if (bucket === undefined && yearKey !== data.last_date.slice(0, 4)) {
+    return null;
+  }
+  if (yearKey === data.last_date.slice(0, 4)) {
+    return (bucket ?? 0) + data.today_kwh;
+  }
+  return bucket ?? null;
+}
+
+/**
+ * The hourly profile of one day (a 24-entry copy), or null when not recorded.
+ * @param {string} dateKey YYYY-MM-DD
+ */
+export async function hourlyFor(dateKey) {
+  const data = await ensureLoaded();
+  const profile = data.hours[dateKey];
+  return profile ? [...profile] : null;
+}
+
+/**
+ * The days of ONE month, oldest first, including today's partial. Days we
+ * never read are absent (honest gaps).
+ * @param {string} monthKey YYYY-MM
+ */
+export async function daysOfMonth(monthKey) {
+  const data = await ensureLoaded();
+  const result = data.days
+    .filter((entry) => entry.date.startsWith(monthKey))
+    .map((entry) => ({ date: entry.date, kwh: entry.kwh }));
+  if (data.last_date !== null && data.last_date.startsWith(monthKey)) {
+    result.push({ date: data.last_date, kwh: data.today_kwh });
+  }
+  return result.sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/**
+ * The months of ONE year, oldest first, including the running month partial.
+ * @param {string} yearKey YYYY
+ */
+export async function monthsOfYear(yearKey) {
+  const data = await ensureLoaded();
+  const result = Object.entries(data.months)
+    .filter(([key]) => key.startsWith(yearKey))
+    .map(([month, kwh]) => ({ month, kwh }));
+  if (data.last_date !== null && data.last_date.slice(0, 4) === yearKey) {
+    const month = data.last_date.slice(0, 7);
+    if (!result.some((entry) => entry.month === month)) {
+      result.push({ month, kwh: data.today_kwh });
+    }
+  }
+  return result.sort((a, b) => (a.month < b.month ? -1 : 1));
 }

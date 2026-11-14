@@ -167,8 +167,9 @@ dashboard. The power meter features (imported / exported energy) use the
 
 ## Dashboard widgets and statistics
 
-The integration ships **two widgets** to place on a Gladys dashboard:
-*Dashboard → Edit → Add a widget → Huawei SUN2000*.
+The integration ships **four widgets** to place on a Gladys dashboard:
+*Dashboard → Edit → Add a widget → Huawei SUN2000*. Gladys has no tabs
+*inside* a widget, hence one widget per view.
 
 ### "Huawei SUN2000" — live overview
 
@@ -176,19 +177,43 @@ The integration ships **two widgets** to place on a Gladys dashboard:
   animates at every poll.
 - **Gauge**: the instant power against the inverter's rated power (read on
   the "Test the connection" action).
-- **Today / This month / This year** (kWh), from the statistics module
-  below.
+- **DC input** and **internal temperature**.
 - **Bar chart of the last 7 days**.
 - **Status**: the inverter state (On grid, Standby, Shutdown...) and the
   grid exchange (Importing X kW / Exporting X kW / Balanced) when a Smart
   Power Sensor is installed.
+- **Start / Stop buttons**: the same on/off command as the device switch.
+  ⚠️ Same warning as above: the remote shutdown may be irreversible on
+  some firmwares.
 
-### "Huawei SUN2000 production" — statistics
+### "Huawei SUN2000 — Day / Month / Year" — three navigable views
 
-- The three totals (day / month / year) and the inverter's **lifetime
-  counter** (since commissioning).
-- **Bar chart of the last 30 days**.
-- The **month-by-month breakdown of the running year**.
+- **Day**: the selected day's production **hour by hour** (24 bars), with
+  its day total.
+- **Month**: the selected month **day by day**, with the **same month of
+  the previous year** drawn alongside for comparison.
+- **Year**: the selected year **month by month**, with the **previous
+  year** alongside.
+- Each view has three buttons: **⟵ previous period**, **current period**
+  (Today / This month / This year), **next period ⟶**. Navigation stops at
+  the first recorded period (an explicit message beyond); after a module
+  restart the view comes back to the current period.
+
+### What the navigation can show (and since when)
+
+The history is what **this integration observed** — the inverter stores
+nothing readable over Modbus:
+
+- the **hourly detail** is rebuilt from the daily-register delta of every
+  poll (every minute): it starts when this version is installed and is kept
+  for **40 days**;
+- the energy produced **before the first poll of a day** (mornings, or a
+  mid-day restart) is booked into that first poll's hour: an approximation,
+  the only attribution available;
+- the **per-day totals** are kept for **~13 months** (the month view
+  navigates back to the previous year), the monthly buckets **25 months**;
+- days when nothing was read (module stopped, inverter unreachable) do not
+  appear — no value is invented.
 
 ### How the statistics are computed
 
@@ -200,13 +225,11 @@ container. The model is deliberately honest:
 
 - at the first reading of a new day, the previous day is **closed** with its
   last known value and added to the month and year buckets;
-- days when nothing was read (integration stopped, inverter unreachable)
-  **do not exist** in the series: no value is invented, and the totals only
-  count the history observed since the file was created;
 - within a single day, a lower reading is ignored (the daily register only
   goes up);
 - the file is written atomically and survives restarts; a corrupt file
-  starts clean instead of taking the module down.
+  starts clean instead of taking the module down (a file of the previous
+  version is migrated, its history kept).
 
 The widgets never read Modbus directly: they show the last poll snapshot and
 the `/data` totals. Before the first successful read (startup, inverter

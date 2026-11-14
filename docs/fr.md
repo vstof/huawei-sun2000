@@ -158,8 +158,9 @@ elles alimentent le suivi **réseau** du même tableau de bord.
 
 ## Widgets du tableau de bord et statistiques
 
-L'intégration fournit **deux widgets** à poser sur un tableau de bord
+L'intégration fournit **quatre widgets** à poser sur un tableau de bord
 Gladys : *Tableau de bord → Éditer → Ajouter un widget → Huawei SUN2000*.
+Gladys ne permet pas d'onglets *dans* un widget, d'où un widget par vue.
 
 ### « Huawei SUN2000 » — aperçu en temps réel
 
@@ -167,19 +168,44 @@ Gladys : *Tableau de bord → Éditer → Ajouter un widget → Huawei SUN2000*.
   produite (AC) » — elle s'anime à chaque rafraîchissement du poll.
 - **Jauge** : puissance instantanée rapportée à la puissance nominale de
   l'onduleur (lue lors du « Test de la connexion »).
-- **Aujourd'hui / Ce mois / Cette année** (kWh), issus du module
-  statistiques ci-dessous.
+- **Entrée DC** et **température interne**.
 - **Graphique en barres des 7 derniers jours**.
 - **Statut** : état de l'onduleur (Connecté, Veille, Arrêté...) et échange
   réseau (Soutirage X kW / Injection X kW / Équilibré) si un Smart Power
   Sensor est installé.
+- **Boutons Démarrer / Arrêter** : la même commande marche/arrêt que
+  l'interrupteur de l'appareil. ⚠️ Même avertissement que plus haut :
+  l'arrêt à distance peut être irréversible sur certains firmwares.
 
-### « Production Huawei SUN2000 » — statistiques
+### « Huawei SUN2000 — Journée / Mois / Année » — trois vues navigables
 
-- Les trois totaux (jour / mois / année) et le **compteur de vie** de
-  l'onduleur (depuis la mise en service).
-- **Graphique en barres des 30 derniers jours**.
-- La répartition **mois par mois de l'année en cours**.
+- **Journée** : la production du jour sélectionné **heure par heure**
+  (24 barres), avec son total du jour.
+- **Mois** : la production du mois sélectionné **jour par jour**, avec le
+  **même mois de l'année précédente** dessiné à côté pour comparer.
+- **Année** : la production de l'année sélectionnée **mois par mois**, avec
+  **l'année précédente** à côté.
+- Chaque vue a trois boutons : **⟵ période précédente**, **période en cours**
+  (Aujourd'hui / Ce mois / Cette année), **période suivante ⟶**. La
+  navigation s'arrête à la première période enregistrée (message explicite
+  au-delà) ; après un redémarrage du module, la vue revient à la période
+  courante.
+
+### Ce que la navigation peut afficher (et depuis quand)
+
+L'historique est celui que **cette intégration a observé** — l'onduleur ne
+stocke rien de consultable en Modbus :
+
+- le **détail horaire** est reconstruit à partir du delta du registre
+  journalier à chaque relevé (toutes les minutes) : il commence à
+  l'installation de cette version et est conservé **40 jours** ;
+- l'énergie produite **avant le premier relevé d'un jour** (matin, ou
+  redémarrage en cours de journée) est rattachée à l'heure de ce premier
+  relevé : c'est une approximation, la seule attribution disponible ;
+- les **totaux par jour** sont conservés **~13 mois** (navigation du mois
+  jusqu'à l'année précédente), les cumuls mensuels **25 mois** ;
+- les jours où rien n'a été lu (module arrêté, onduleur injoignable)
+  n'apparaissent pas — aucune valeur n'est inventée.
 
 ### Comment les statistiques sont calculées
 
@@ -192,13 +218,11 @@ conteneur. Le modèle est volontairement honnête :
 - à la première lecture d'un nouveau jour, la journée précédente est
   **closée** avec sa dernière valeur connue et ajoutée aux cumuls du mois et
   de l'année ;
-- les jours où rien n'a été lu (intégration arrêtée, onduleur injoignable)
-  **n'existent pas** dans les séries : aucune valeur n'est inventée, et les
-  totaux ne comptent que l'historique observé depuis la création du fichier ;
 - dans une même journée, une lecture plus basse que la précédente est
   ignorée (le registre du jour ne peut que monter) ;
 - le fichier est écrit atomiquement et survit aux redémarrages ; un fichier
-  corrompu repart à zéro sans faire tomber le module.
+  corrompu repart à zéro sans faire tomber le module (un fichier de
+  l'ancienne version est migré, son historique conservé).
 
 Les widgets ne lisent jamais le Modbus directement : ils affichent le
 dernier relevé du poll et les cumuls de `/data`. Si aucun relevé n'a encore

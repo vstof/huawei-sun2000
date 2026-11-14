@@ -19,11 +19,14 @@ Smart Dongle, port 502).
 - Aucun autre registre de réglage (codes réseau, bridage de puissance) n'est
   écrit — c'est le domaine de l'installateur.
 - Aucun cloud Huawei/FusionSolar : tout passe par le réseau local.
-- **Deux widgets de tableau de bord** : aperçu en temps réel (puissance AC
-  vivante, jauge vs nominale, totaux, 7 derniers jours, état + réseau) et
-  statistiques (totaux jour/mois/année, 30 derniers jours, mois de l'année).
-- **Statistiques jour / mois / année** cumulées localement sous `/data`
-  (les jours non observés ne sont pas inventés).
+- **Quatre widgets de tableau de bord** : aperçu temps réel (puissance AC
+  vivante, jauge vs nominale, entrée DC, température, 7 derniers jours,
+  état + réseau, boutons démarrer/arrêt) et trois vues de production
+  **navigables** (journée heure par heure, mois jour par jour, année mois
+  par mois — avec la période équivalente de l'année précédente en
+  comparaison).
+- **Statistiques jour / mois / année (+ détail horaire)** cumulées
+  localement sous `/data` (les jours non observés ne sont pas inventés).
 
 📖 Documentation utilisateur : [`docs/fr.md`](docs/fr.md) (FR) ·
 [`docs/en.md`](docs/en.md) (EN)
@@ -32,7 +35,7 @@ Smart Dongle, port 502).
 
 ```bash
 npm install
-npm test        # node --test (aucun accès réseau dans les tests)
+npm test        # node --test (aucun accès réseau dans les tests) — 88 tests
 ```
 
 Architecture :
@@ -43,7 +46,7 @@ src/config.js                     DEFAULT_CONFIG + normalisation de la config
 src/modbus.js                     client Modbus TCP minimal (node:net, zéro dépendance)
 src/i18n.js                       chaînes utilisateur (device/mesures stockées en anglais)
 src/stats.js                      cumuls jour/mois/année persistés sous /data
-src/widgets.js                    les 2 widgets du tableau de bord
+src/widgets.js                    les 4 widgets du tableau de bord (dont 3 navigables)
 src/devices/index.js              registre des appareils + dispatcheur de poll
 src/devices/inverter.js           l'appareil onduleur (découverte, lecture des blocs, états, commandes)
 gladys-assistant-integration.json manifeste (config, action, widgets, image, version)

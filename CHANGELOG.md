@@ -6,6 +6,30 @@ All notable changes to this integration are documented here.
 
 ### Added
 
+- **Navigable period widgets** (widget actions + `requestWidgetRefresh`):
+  - `huawei_day`: the selected day **per hour** (24 bars), with previous /
+    next / today buttons;
+  - `huawei_month`: the selected month **per day**, with the same month of
+    the previous year drawn alongside;
+  - `huawei_year`: the selected year **per month**, with the previous year
+    alongside.
+  The per-hour profiles accumulate the daily-register delta of every poll
+  (approximation: the energy produced before the first poll of a day is
+  booked into that poll's hour). Hourly detail is kept 40 days, per-day
+  totals ~13 months, month buckets 25.
+- **Overview widget rework**: the day / month / year counter tiles moved out
+  (the period widgets show them now); added the **internal temperature** and
+  **DC input** tiles and **Start / Stop buttons** (the standard device
+  command path, same warning as the running switch).
+
+### Changed
+
+- The statistics file is versioned (`version: 2`): a version-1 file is
+  migrated on load, its daily and monthly history is kept.
+- `huawei-sun2000-gladys:1.5.0` image.
+
+### Added (1.4.0 content, unpublished release)
+
 - **Two dashboard widgets** (declared in the manifest, rendered by the Gladys
   core — no custom HTML/CSS, every text is a native `{ en, fr }` object):
   - `huawei-overview`: live AC power tile (bound to the feature, animates at

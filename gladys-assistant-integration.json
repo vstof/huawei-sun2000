@@ -19,12 +19,30 @@
       "settings": []
     },
     {
-      "key": "huawei_production",
+      "key": "huawei_day",
       "label": {
-        "en": "Huawei SUN2000 production",
-        "fr": "Production Huawei SUN2000"
+        "en": "Huawei SUN2000 — Day",
+        "fr": "Huawei SUN2000 — Journée"
+      },
+      "icon": "calendar",
+      "settings": []
+    },
+    {
+      "key": "huawei_month",
+      "label": {
+        "en": "Huawei SUN2000 — Month",
+        "fr": "Huawei SUN2000 — Mois"
       },
       "icon": "bar-chart-2",
+      "settings": []
+    },
+    {
+      "key": "huawei_year",
+      "label": {
+        "en": "Huawei SUN2000 — Year",
+        "fr": "Huawei SUN2000 — Année"
+      },
+      "icon": "trending-up",
       "settings": []
     }
   ],

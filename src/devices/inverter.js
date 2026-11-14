@@ -214,12 +214,17 @@ const liveSnapshot = {
   ratedPower: null,
   acPower: null,
   dcPower: null,
+  efficiency: null,
+  temperature: null,
   status: null,
   fault: null,
   dailyKwh: null,
   totalKwh: null,
   meterPower: null,
 };
+
+// Last daily-register reading, to compute the per-hour delta of the stats.
+const lastReading = { date: null, kwh: null };
 
 /**
  * @description The external_id of one feature (dashboard widgets bind live
@@ -239,6 +244,8 @@ export function resetLiveSnapshotForTests() {
   for (const key of Object.keys(liveSnapshot)) {
     liveSnapshot[key] = null;
   }
+  lastReading.date = null;
+  lastReading.kwh = null;
 }
 
 /**
@@ -262,6 +269,10 @@ function updateLiveSnapshot({ identity, power, energy, meter } = {}) {
     const acPower = i32(power, 16);
     liveSnapshot.acPower = acPower > 0 ? acPower : 0;
     liveSnapshot.dcPower = Math.max(0, i32(power, 0));
+    const efficiency = u16(power, 22) / 100; // 32086, %
+    liveSnapshot.efficiency = efficiency > 0 && efficiency <= 100 ? efficiency : null;
+    const temperature = i16(power, 23) / 10; // 32087, °C
+    liveSnapshot.temperature = temperature > -50 && temperature < 150 ? temperature : null;
     liveSnapshot.status = STATUS_CODES.get(u16(power, 25)) ?? 'unknown';
     liveSnapshot.fault = u16(power, 26);
   }
@@ -592,11 +603,28 @@ export const inverter = {
     const states = buildStates(ids, { power, ...optional });
     logger.debug(`Poll: ${states.length} value(s) read`);
     // Keep the live snapshot for the dashboard widgets, and feed the
-    // production statistics with the daily-yield register (32114).
+    // production statistics with the daily-yield register (32114): the daily
+    // total for the month/year buckets, and the delta since the previous
+    // poll for the hourly profile.
     updateLiveSnapshot({ power, ...optional });
     if (optional.energy) {
+      const today = localDate();
+      const daily = u32(optional.energy, 8) / 100;
+      let hourlyDelta = null;
+      if (lastReading.date === today && lastReading.kwh !== null) {
+        // Same day: the delta since the previous poll (a lower reading is a
+        // glitch: no delta).
+        hourlyDelta = daily >= lastReading.kwh ? daily - lastReading.kwh : null;
+      } else {
+        // First poll of the day: the register already holds the morning's
+        // production; the whole of it is booked into the current hour (the
+        // only attribution available — see src/stats.js).
+        hourlyDelta = daily;
+      }
+      lastReading.date = today;
+      lastReading.kwh = daily;
       try {
-        await recordDaily(localDate(), u32(optional.energy, 8) / 100);
+        await recordDaily(today, daily, hourlyDelta, new Date().getHours());
       } catch (statsError) {
         logger.debug(`Statistics update failed: ${statsError.message}`);
       }

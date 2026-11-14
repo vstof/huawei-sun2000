@@ -1,29 +1,53 @@
 // -----------------------------------------------------------------------------
 // Dashboard widgets (declared in the manifest `widgets`, rendered by Gladys).
 //
-// Two widgets, both fed by the live snapshot the poller keeps in memory
+// Four widgets, fed by the live snapshot the poller keeps in memory
 // (src/devices/inverter.js) and by the accumulated statistics (/data,
 // src/stats.js):
 //
 //   - "huawei_overview": the live picture — production now (live tile +
-//     gauge against the rated power), today / month / year tiles, the last
-//     7 days as bars, and the inverter / grid status lines;
-//   - "huawei_production": the statistics view — the same three totals, the
-//     last 30 days as bars, and the months of the running year.
+//     gauge against the rated power), internal temperature and DC input
+//     tiles, the last 7 days as bars, the inverter / grid status lines and
+//     start / stop buttons;
+//   - "huawei_day" / "huawei_month" / "huawei_year": the production of one
+//     period (per hour / per day / per month), navigable with previous /
+//     next / today buttons, with the equivalent previous-year period drawn
+//     alongside (month and year widgets).
 //
 // Every text is a multi-language `{ en, fr }` object: Gladys picks the
 // requesting user's language. The vocabulary carries no free HTML/CSS, so the
 // "animation" is the core's own rendering: live tiles update with the poll,
 // and the gauge/chart components are rendered (and transitioned) by the core.
+//
+// Navigation: the core offers no tabs, but a `button` can carry a widget
+// ACTION (onWidgetAction). Our nav buttons shift an in-memory offset for the
+// widget, then fire requestWidgetRefresh so every open instance re-pulls the
+// content. The offset resets on container restart (back to "today") and is
+// shared by every instance of the same widget key.
 // -----------------------------------------------------------------------------
 
 import { WIDGET_COLORS } from '@gladysassistant/integration-sdk';
-import { snapshot as statsSnapshot } from './stats.js';
+import {
+  snapshot as statsSnapshot,
+  dayTotal,
+  monthTotal,
+  yearTotal,
+  hourlyFor,
+  daysOfMonth,
+  monthsOfYear,
+  dataBounds,
+  addDays,
+  addMonths,
+  dayDiff,
+  localDate,
+} from './stats.js';
 import { getLiveSnapshot, featureExternalId } from './devices/inverter.js';
 
 export const WIDGET_KEYS = {
   overview: 'huawei_overview',
-  production: 'huawei_production',
+  day: 'huawei_day',
+  month: 'huawei_month',
+  year: 'huawei_year',
 };
 
 const W = WIDGET_COLORS;
@@ -35,10 +59,25 @@ const MONTH_NAMES = {
   fr: ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'],
 };
 
-function monthLabel(monthKey, language) {
-  const [, month] = monthKey.split('-').map(Number);
+const MONTH_NAMES_LONG = {
+  en: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+  fr: ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'],
+};
+
+const monthIndex = (monthKey) => (Number(monthKey.split('-')[1]) || 1) - 1;
+
+function monthLabelLong(monthKey, language) {
+  const names = MONTH_NAMES_LONG[language] ?? MONTH_NAMES_LONG.en;
+  return `${names[monthIndex(monthKey)] ?? monthKey} ${monthKey.slice(0, 4)}`;
+}
+
+function dayLabel(dateKey, language) {
   const names = MONTH_NAMES[language] ?? MONTH_NAMES.en;
-  return names[(month ?? 1) - 1] ?? monthKey;
+  const [, month, day] = dateKey.split('-').map(Number);
+  if (language === 'fr') {
+    return `${day} ${names[month - 1] ?? dateKey} ${dateKey.slice(0, 4)}`;
+  }
+  return `${names[month - 1] ?? dateKey} ${day}, ${dateKey.slice(0, 4)}`;
 }
 
 const round = (value, digits = 2) => {
@@ -93,6 +132,101 @@ function statusText(language, status) {
   return table[status] ?? status ?? '—';
 }
 
+// --- Navigation state ----------------------------------------------------------
+// One offset per widget key, in memory (back to "today" after a restart).
+// Instances of the same widget key share the offset: acceptable — the
+// core sends no instance identifier with onWidgetGet/onWidgetAction.
+
+const periodOffset = new Map();
+
+const offsetOf = (key) => periodOffset.get(key) ?? 0;
+
+export function resetNavStateForTests() {
+  periodOffset.clear();
+}
+
+/**
+ * Clamp an offset to the data actually recorded.
+ * @param {string} key widget key
+ * @param {number} offset requested (<= 0)
+ */
+async function clampOffset(key, offset) {
+  const bounds = await dataBounds();
+  const today = localDate();
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const currentYear = String(now.getFullYear());
+  if (key === WIDGET_KEYS.day) {
+    const min = bounds.firstDay ? -dayDiff(bounds.firstDay, today) : 0;
+    return Math.min(0, Math.max(min, offset));
+  }
+  if (key === WIDGET_KEYS.month) {
+    const min = bounds.firstMonth ? -monthDiff(bounds.firstMonth, currentMonth) : 0;
+    return Math.min(0, Math.max(min, offset));
+  }
+  const min = bounds.firstYear ? Number(bounds.firstYear) - Number(currentYear) : 0;
+  return Math.min(0, Math.max(min, offset));
+}
+
+/** Whole months between two YYYY-MM keys (b - a). */
+function monthDiff(a, b) {
+  const [ay, am] = a.split('-').map(Number);
+  const [by, bm] = b.split('-').map(Number);
+  return by * 12 + bm - (ay * 12 + am);
+}
+
+/**
+ * Handle a navigation action of a period widget (buttons carry
+ * `action: { key: 'nav', params: { dir } }` or `key: 'today'`). Shifts the
+ * in-memory offset, nudges the core to re-render, and answers with a toast.
+ */
+async function handlePeriodAction(gladys, key, actionKey, params) {
+  const dir = params?.dir === 1 ? 1 : -1;
+  const requested = actionKey === 'today' ? 0 : offsetOf(key) + dir;
+  const clamped = await clampOffset(key, requested);
+  const blocked = clamped !== requested;
+  periodOffset.set(key, clamped);
+  try {
+    gladys.requestWidgetRefresh(key);
+  } catch {
+    // The nudge is fire-and-forget: the TTL re-renders anyway.
+  }
+  if (actionKey === 'today') {
+    return { en: 'Back to today', fr: 'Retour à aujourd\u2019hui' };
+  }
+  const forward = dir === 1;
+  const moved = !blocked;
+  const period = {
+    [WIDGET_KEYS.day]: { en: 'day', fr: 'jour' },
+    [WIDGET_KEYS.month]: { en: 'month', fr: 'mois' },
+    [WIDGET_KEYS.year]: { en: 'year', fr: 'année' },
+  }[key];
+  if (!moved) {
+    return {
+      en: `No recorded data ${forward ? 'beyond' : 'before'} this period`,
+      fr: `Pas de données enregistrées ${forward ? 'au-delà' : 'avant'} cette période`,
+    };
+  }
+  const articleEn = forward ? 'next' : 'previous';
+  const articleFr = forward ? 'suivant' : 'précédent';
+  return {
+    en: `Showing the ${articleEn} ${period.en}`,
+    fr: `${period.fr.charAt(0).toUpperCase()}${period.fr.slice(1)} ${articleFr} affiché`,
+  };
+}
+
+/**
+ * The nav buttons of a period widget (≤ 4 buttons in the budget).
+ * @param {{prev: object, next: object, today: object}} labels
+ */
+function navButtons(labels) {
+  return [
+    { type: 'button', label: labels.prev, icon: 'chevron-left', action: { key: 'nav', params: { dir: -1 } } },
+    { type: 'button', label: labels.today, icon: 'rotate-ccw', action: { key: 'today' } },
+    { type: 'button', label: labels.next, icon: 'chevron-right', action: { key: 'nav', params: { dir: 1 } } },
+  ];
+}
+
 /**
  * The live overview widget.
  * @param {object} gladys SDK instance (external ids)
@@ -123,34 +257,27 @@ export async function overviewWidget(gladys, { language = 'en' } = {}) {
       label: { en: 'vs rated power', fr: 'vs puissance nominale' },
       color: W.PRIMARY,
     });
+    if (live.dcPower !== null && Number.isFinite(live.dcPower)) {
+      components.push({
+        type: 'value',
+        value: Math.round(live.dcPower),
+        unit: 'W',
+        label: { en: 'DC input', fr: 'Entrée DC' },
+        icon: 'zap',
+        color: W.INFO,
+      });
+    }
+    if (live.temperature !== null && Number.isFinite(live.temperature)) {
+      components.push({
+        type: 'value',
+        value: Math.round(live.temperature * 10) / 10,
+        unit: '°C',
+        label: { en: 'Internal temp.', fr: 'Température int.' },
+        icon: 'thermometer',
+        color: W.DANGER,
+      });
+    }
   }
-
-  components.push(
-    {
-      type: 'value',
-      value: round(stats.today),
-      unit: 'kWh',
-      label: { en: 'Today', fr: 'Aujourd\u2019hui' },
-      icon: 'sunrise',
-      color: W.SUCCESS,
-    },
-    {
-      type: 'value',
-      value: round(stats.month),
-      unit: 'kWh',
-      label: { en: 'This month', fr: 'Ce mois' },
-      icon: 'calendar',
-      color: W.SUCCESS,
-    },
-    {
-      type: 'value',
-      value: round(stats.year),
-      unit: 'kWh',
-      label: { en: 'This year', fr: 'Cette année' },
-      icon: 'calendar',
-      color: W.SUCCESS,
-    },
-  );
 
   if (stats.days.length >= 2) {
     components.push({
@@ -191,78 +318,235 @@ export async function overviewWidget(gladys, { language = 'en' } = {}) {
   }
   components.push({ type: 'status', items: statusItems });
 
-  return { ttl_seconds: 60, components };
-}
-
-/**
- * The production statistics widget.
- */
-export async function productionWidget(gladys, { language = 'en' } = {}) {
-  const stats = await statsSnapshot();
-  const live = getLiveSnapshot();
-  const components = [];
-
+  // Start / stop: the standard device-command path (the values come back
+  // through onSetValue, like the running switch of the device). See the
+  // docs warning before using the stop command on a real inverter.
+  const running = featureExternalId(gladys, 'running');
   components.push(
     {
-      type: 'value',
-      value: round(stats.today),
-      unit: 'kWh',
-      label: { en: 'Today', fr: 'Aujourd\u2019hui' },
-      icon: 'sunrise',
-      color: W.SUCCESS,
+      type: 'button',
+      label: { en: 'Start', fr: 'Démarrer' },
+      icon: 'play',
+      device_feature: running,
+      value: 1,
     },
     {
-      type: 'value',
-      value: round(stats.month),
-      unit: 'kWh',
-      label: { en: 'This month', fr: 'Ce mois' },
-      icon: 'calendar',
-      color: W.SUCCESS,
-    },
-    {
-      type: 'value',
-      value: round(stats.year),
-      unit: 'kWh',
-      label: { en: 'This year', fr: 'Cette année' },
-      icon: 'calendar',
-      color: W.SUCCESS,
+      type: 'button',
+      label: { en: 'Stop', fr: 'Arrêter' },
+      icon: 'square',
+      style: 'danger',
+      device_feature: running,
+      value: 0,
     },
   );
 
-  if (live && live.totalKwh !== null && Number.isFinite(live.totalKwh)) {
+  return { ttl_seconds: 60, components };
+}
+
+// --- The three period widgets ---------------------------------------------------
+
+/**
+ * The "day" widget: the selected day per hour, navigable.
+ */
+export async function dayWidget(gladys, { language = 'en' } = {}) {
+  const today = localDate();
+  const offset = await clampOffset(WIDGET_KEYS.day, offsetOf(WIDGET_KEYS.day));
+  periodOffset.set(WIDGET_KEYS.day, offset);
+  const date = addDays(today, offset);
+
+  const [total, hourly] = await Promise.all([dayTotal(date), hourlyFor(date)]);
+  const components = [];
+
+  if (total !== null) {
+    components.push({
+      type: 'value',
+      value: round(total),
+      unit: 'kWh',
+      label: { en: 'Day total', fr: 'Total du jour' },
+      icon: 'sun',
+      color: W.SUCCESS,
+    });
+  }
+
+  if (hourly) {
+    components.push({
+      type: 'chart',
+      chart_type: 'bar',
+      title: { en: dayLabel(date, 'en'), fr: dayLabel(date, 'fr') },
+      unit: 'kWh',
+      series: [
+        {
+          name: { en: 'Hourly production', fr: 'Production horaire' },
+          points: hourly.map((kwh, hour) => ({
+            t: `${date}T${String(hour).padStart(2, '0')}:00:00`,
+            v: round(kwh),
+          })),
+        },
+      ],
+    });
+  } else {
     components.push({
       type: 'text',
       variant: 'caption',
       text: {
-        en: `Since commissioning (inverter counter): ${round(live.totalKwh)} kWh`,
-        fr: `Depuis la mise en service (compteur onduleur) : ${round(live.totalKwh)} kWh`,
+        en: `No hourly detail recorded for ${dayLabel(date, 'en')} (recording started with this version).`,
+        fr: `Pas de détail horaire enregistré pour le ${dayLabel(date, 'fr')} (l'enregistrement a commencé avec cette version).`,
       },
     });
   }
 
-  if (stats.days.length >= 2) {
+  components.push(...navButtons({
+    prev: { en: 'Previous day', fr: 'Jour précédent' },
+    today: { en: 'Today', fr: 'Aujourd\u2019hui' },
+    next: { en: 'Next day', fr: 'Jour suivant' },
+  }));
+  return { ttl_seconds: 60, components };
+}
+
+/**
+ * The "month" widget: the selected month per day, with the same month of the
+ * previous year drawn alongside, navigable.
+ */
+export async function monthWidget(gladys, { language = 'en' } = {}) {
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const offset = await clampOffset(WIDGET_KEYS.month, offsetOf(WIDGET_KEYS.month));
+  periodOffset.set(WIDGET_KEYS.month, offset);
+  const month = addMonths(currentMonth, offset);
+  const previousYearMonth = addMonths(month, -12);
+
+  const [total, days, previousYearDays] = await Promise.all([
+    monthTotal(month),
+    daysOfMonth(month),
+    daysOfMonth(previousYearMonth),
+  ]);
+  const components = [];
+
+  if (total !== null) {
+    components.push({
+      type: 'value',
+      value: round(total),
+      unit: 'kWh',
+      label: { en: 'Month total', fr: 'Total du mois' },
+      icon: 'calendar',
+      color: W.SUCCESS,
+    });
+  }
+
+  if (days.length > 0) {
+    const series = [dailySeries(days)];
+    if (previousYearDays.length > 0) {
+      series.push({
+        name: { en: `${monthLabelLong(previousYearMonth, 'en')} (previous year)`, fr: `${monthLabelLong(previousYearMonth, 'fr')} (année précédente)` },
+        points: previousYearDays.map((entry) => ({ t: entry.date, v: round(entry.kwh) })),
+      });
+    }
     components.push({
       type: 'chart',
       chart_type: 'bar',
-      title: { en: 'Last 30 days', fr: '30 derniers jours' },
+      title: { en: monthLabelLong(month, 'en'), fr: monthLabelLong(month, 'fr') },
       unit: 'kWh',
-      series: [dailySeries(stats.days)],
+      series,
     });
-  }
-
-  if (stats.months.length > 0) {
+  } else {
     components.push({
-      type: 'status',
-      items: stats.months.map((entry) => ({
-        label: { en: monthLabel(entry.month, 'en'), fr: monthLabel(entry.month, 'fr') },
-        value: round(entry.kwh),
-        icon: 'calendar',
-        color: W.SUCCESS,
-      })),
+      type: 'text',
+      variant: 'caption',
+      text: {
+        en: `No production recorded for ${monthLabelLong(month, 'en')} yet.`,
+        fr: `Aucune production enregistrée pour ${monthLabelLong(month, 'fr')} pour l'instant.`,
+      },
     });
   }
 
+  components.push(...navButtons({
+    prev: { en: 'Previous month', fr: 'Mois précédent' },
+    today: { en: 'This month', fr: 'Ce mois' },
+    next: { en: 'Next month', fr: 'Mois suivant' },
+  }));
   return { ttl_seconds: 60, components };
+}
+
+/**
+ * The "year" widget: the selected year per month, with the previous year
+ * drawn alongside, navigable.
+ */
+export async function yearWidget(gladys, { language = 'en' } = {}) {
+  const now = new Date();
+  const currentYear = String(now.getFullYear());
+  const offset = await clampOffset(WIDGET_KEYS.year, offsetOf(WIDGET_KEYS.year));
+  periodOffset.set(WIDGET_KEYS.year, offset);
+  const year = String(Number(currentYear) + offset);
+  const previousYear = String(Number(year) - 1);
+
+  const [total, months, previousYearMonths] = await Promise.all([
+    yearTotal(year),
+    monthsOfYear(year),
+    monthsOfYear(previousYear),
+  ]);
+  const components = [];
+
+  if (total !== null) {
+    components.push({
+      type: 'value',
+      value: round(total),
+      unit: 'kWh',
+      label: { en: 'Year total', fr: "Total de l'année" },
+      icon: 'calendar',
+      color: W.SUCCESS,
+    });
+  }
+
+  if (months.length > 0) {
+    const series = [
+      {
+        name: { en: 'Monthly production', fr: 'Production mensuelle' },
+        points: months.map((entry) => ({ t: entry.month, v: round(entry.kwh) })),
+      },
+    ];
+    if (previousYearMonths.length > 0) {
+      series.push({
+        name: { en: `${previousYear} (previous year)`, fr: `${previousYear} (année précédente)` },
+        points: previousYearMonths.map((entry) => ({ t: entry.month, v: round(entry.kwh) })),
+      });
+    }
+    components.push({
+      type: 'chart',
+      chart_type: 'bar',
+      title: { en: year, fr: year },
+      unit: 'kWh',
+      series,
+    });
+  } else {
+    components.push({
+      type: 'text',
+      variant: 'caption',
+      text: {
+        en: `No production recorded for ${year} yet.`,
+        fr: `Aucune production enregistrée pour ${year} pour l'instant.`,
+      },
+    });
+  }
+
+  components.push(...navButtons({
+    prev: { en: 'Previous year', fr: 'Année précédente' },
+    today: { en: 'This year', fr: 'Cette année' },
+    next: { en: 'Next year', fr: 'Année suivante' },
+  }));
+  return { ttl_seconds: 60, components };
+}
+
+/**
+ * Dispatch a period widget by key.
+ */
+export function periodWidget(gladys, key, options = {}) {
+  if (key === WIDGET_KEYS.day) {
+    return dayWidget(gladys, options);
+  }
+  if (key === WIDGET_KEYS.month) {
+    return monthWidget(gladys, options);
+  }
+  return yearWidget(gladys, options);
 }
 
 /**
@@ -271,5 +555,8 @@ export async function productionWidget(gladys, { language = 'en' } = {}) {
  */
 export function registerWidgets(gladys) {
   gladys.onWidgetGet(WIDGET_KEYS.overview, (options) => overviewWidget(gladys, options ?? {}));
-  gladys.onWidgetGet(WIDGET_KEYS.production, (options) => productionWidget(gladys, options ?? {}));
+  for (const key of [WIDGET_KEYS.day, WIDGET_KEYS.month, WIDGET_KEYS.year]) {
+    gladys.onWidgetGet(key, (options) => periodWidget(gladys, key, options ?? {}));
+    gladys.onWidgetAction(key, (actionKey, params) => handlePeriodAction(gladys, key, actionKey, params));
+  }
 }
