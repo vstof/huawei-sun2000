@@ -10,8 +10,14 @@ Smart Dongle, port 502).
   interne, état de l'onduleur, code d'anomalie.
 - Lecture du **compteur Smart Power Sensor** (DTSU666) quand il est installé :
   puissance réseau (soutirée/injectée), énergies soutirée et injectée.
-- Lecture seule : aucun registre de réglage (codes réseau, bridage de puissance)
-  n'est écrit — c'est le domaine de l'installateur.
+- **Commande marche / arrêt** de l'onduleur (interrupteur `running`) : même
+  séquence que l'intégration Home Assistant — heartbeat registre 49999 (valeur
+  1) puis commande startup 40200 ou shutdown 40201 (valeur 0). L'état affiché
+  est dérivé du registre d'état 32089. ⚠️ Voir l'avertissement dans
+  [`docs/fr.md`](docs/fr.md) : sur certains firmwares, l'arrêt à distance peut
+  être irréversible sans l'application SUN2000.
+- Aucun autre registre de réglage (codes réseau, bridage de puissance) n'est
+  écrit — c'est le domaine de l'installateur.
 - Aucun cloud Huawei/FusionSolar : tout passe par le réseau local.
 
 📖 Documentation utilisateur : [`docs/fr.md`](docs/fr.md) (FR)
@@ -30,7 +36,7 @@ index.js                          câblage du SDK (handlers enregistrés avant c
 src/config.js                     DEFAULT_CONFIG + normalisation de la config
 src/modbus.js                     client Modbus TCP minimal (node:net, zéro dépendance)
 src/devices/index.js              registre des appareils + dispatcheur de poll
-src/devices/inverter.js           l'appareil onduleur (découverte, lecture des blocs, états)
+src/devices/inverter.js           l'appareil onduleur (découverte, lecture des blocs, états, commandes)
 gladys-assistant-integration.json manifeste (config, action, image, version)
 test/                             tests node --test
 docs/                             documentation utilisateur (hébergée par Gladys)
@@ -48,7 +54,7 @@ npm run build:image     # docker build + étiquette io.gladysassistant.manifest
 > donnerait `MANIFEST_NOT_FOUND`.
 
 Puis dans Gladys : **Intégrations → Installer une intégration → Mode développeur →
-image Docker** `huawei-sun2000-gladys:1.0.0`. Détails dans [`docs/fr.md`](docs/fr.md).
+image Docker** `huawei-sun2000-gladys:1.1.0`. Détails dans [`docs/fr.md`](docs/fr.md).
 
 ## Registres utilisés
 
@@ -62,6 +68,8 @@ Smart / SmartLogger, registres de maintien, FC 03) :
 | puissance | 32064..32090 | puissance DC, tensions réseau, courants, puissance AC, réactive, FP, fréquence, rendement, température, état, défaut |
 | énergie | 32106..32115 | énergie totale (32106), énergie du jour (32114) |
 | compteur | 37100..37125 | puissance réseau signée, énergies injectée / soutirée |
+| commandes | 40200, 40201 | startup / shutdown (écriture seule, valeur 0), FC 06 |
+| heartbeat | 49999 | registre « magique » écrit (valeur 1) avant chaque commande, il renouvelle la session d'écriture |
 
 Les blocs sont lus indépendamment : un bloc refusé par le firmware (modèle
 monophasé, pas de compteur, registres absents) ne publie simplement pas ses

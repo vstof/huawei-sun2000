@@ -14,11 +14,27 @@ directly from your local network, with no cloud.
   **fault code** presence, internal temperature, efficiency.
 - When a **Smart Power Sensor (DTSU666)** is installed: grid exchange power
   (imported > 0, exported < 0), cumulative imported and exported energy.
+- **On/off switch** for the inverter, with a state derived from the status
+  register.
 - Refreshes the values every minute (configurable interval from 60 s to 1 h).
 
-The integration is **read-only**: no inverter setting (grid codes, power
-derating, restart) can be changed from Gladys — on purpose, those registers
-belong to the installer.
+The integration is **read-only with one exception**: the "Marche / Arrêt de
+l'onduleur" (inverter on/off) switch. No other setting (grid codes, power
+derating, schedules...) can be changed from Gladys — on purpose, those
+registers belong to the installer.
+
+### ⚠️ The remote shutdown may be irreversible
+
+Writing the shutdown command (register 40201) is exactly what the Home
+Assistant integration does — but be aware: on **some firmwares** (observed on
+SUN2000-30KTL-M3, wlcrs/huawei_solar discussion #576), the remote shutdown
+works but the **remote restart fails afterwards**, even from FusionSolar. The
+only reliable way to start it again is then the mobile **SUN2000** app,
+connected to the inverter's **direct Wi-Fi**.
+
+In practice: only use the remote shutdown if you know how to restart the
+inverter on site (direct Wi-Fi access, installer account). The startup command,
+on the other hand, has no effect on an inverter that is already running.
 
 > The configuration screen and the device names are currently localized in
 > French; this document explains every field in English.
@@ -67,7 +83,7 @@ npm run build:image     # = docker build, with the manifest baked into the image
 
 1. Go to **Integrations** → the **"Install an integration"** button (GitHub).
 2. Unfold the **Developer mode** link.
-3. Paste the image name: `huawei-sun2000-gladys:1.0.0`
+3. Paste the image name: `huawei-sun2000-gladys:1.1.0`
    (the manifest is read automatically from the image labels).
 4. Click **Install**.
 
@@ -112,6 +128,7 @@ dashboard. The power meter features (imported / exported energy) use the
 | Connection OK but values missing | Wrong slave id: try `1` in the configuration |
 | The grid meter publishes nothing | No Smart Power Sensor installed, or its status is not "normal" |
 | Strings 3-4 never show up | Your model only has 2 PV inputs: normal |
+| The on/off command fails: "the inverter refused the command" | Most recent firmwares require **installer-level rights** for these writes (Modbus exception "illegal data address"): use FusionSolar with the installer account, or have the installer enable the "allow remote commands" setting |
 | The connection test stops answering at night | The inverter stands by without irradiation: the registers stay readable, check the dongle Wi-Fi instead |
 | Several tools fight over port 502 | The dongle serves **a single Modbus master**: do not read the registers from two tools at once |
 
@@ -128,3 +145,10 @@ dashboard. The power meter features (imported / exported energy) use the
 - The inverter status is an **enumeration** (standby, starting, on-grid, power
   limited, off-grid, shut down, spot check...): this is what register 32089
   publishes, there is no finer value locally.
+- The on/off switch follows the same scheme as the Home Assistant integration
+  (wlcrs/huawei_solar): heartbeat register 49999 (value 1), then value 0 written
+  to 40200 (startup) or 40201 (shutdown) — the Huawei definitions state that
+  the value of both commands is 0. The displayed state is derived from register
+  32089: "shut down" codes → OFF, "starting / on-grid" codes → ON; in
+  standby-without-irradiation nothing is published (the displayed state does
+  not change).

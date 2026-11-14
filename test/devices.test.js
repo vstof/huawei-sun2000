@@ -113,6 +113,23 @@ function meterBlock({ status = 1, active = -1500, exported = 0, imported = 5050 
   return regs;
 }
 
+// A client for the command tests: the writes are recorded, an injected
+// `writeError` makes every write fail.
+function commandClient({ writeError = null } = {}) {
+  const writes = [];
+  const base = stubClient();
+  return {
+    writes,
+    readRegisters: base.readRegisters,
+    writeRegister: async (address, value) => {
+      writes.push([address, value]);
+      if (writeError) {
+        throw writeError;
+      }
+    },
+  };
+}
+
 function stubClient(overrides = {}) {
   const blocks = {
     identity: identityBlock(),
@@ -148,7 +165,7 @@ test('every blueprint exposes the required shape', () => {
     assert.equal(typeof bp.deviceExternalId, 'function', 'deviceExternalId must be a function');
     assert.equal(typeof bp.buildDevice, 'function', 'buildDevice must be a function');
     assert.equal(typeof bp.onPoll, 'function', 'a polled device implements onPoll');
-    assert.equal(typeof bp.onSetValue, 'function', 'onSetValue exists (and refuses, read-only)');
+    assert.equal(typeof bp.onSetValue, 'function', 'onSetValue exists (routes or refuses commands)');
   }
 });
 
@@ -182,7 +199,13 @@ test('feature external_ids are unique and every feature declares its bounds', ()
     assert.equal(typeof feature.min, 'number', `${feature.name}: min`);
     assert.equal(typeof feature.max, 'number', `${feature.name}: max`);
     assert.equal(typeof feature.read_only, 'boolean', `${feature.name}: read_only`);
-    assert.equal(feature.read_only, true, `${feature.name}: the inverter is read-only`);
+    if (feature.read_only) {
+      assert.equal(feature.has_feedback, false, `${feature.name}: a sensor has no feedback`);
+    } else {
+      assert.equal(feature.has_feedback, true, `${feature.name}: a command reports its state`);
+      assert.equal(feature.category, DEVICE_FEATURE_CATEGORIES.SWITCH, `${feature.name}: a command is a switch`);
+      assert.equal(feature.type, DEVICE_FEATURE_TYPES.SWITCH.BINARY, `${feature.name}: a command is binary`);
+    }
     if (feature.category === DEVICE_FEATURE_CATEGORIES.TEXT) {
       assert.equal(feature.type, DEVICE_FEATURE_TYPES.TEXT.SELECT, `${feature.name}: text feature`);
       assert.ok(Array.isArray(feature.supported_options) && feature.supported_options.length > 0);
@@ -193,8 +216,13 @@ test('feature external_ids are unique and every feature declares its bounds', ()
         `${feature.name}: every option needs a label`,
       );
     }
-    assert.equal(feature.has_feedback, false, `${feature.name}: a sensor has no feedback`);
   }
+  const writable = device.features.filter((feature) => !feature.read_only);
+  assert.deepEqual(
+    writable.map((feature) => feature.name),
+    ['Marche / Arrêt de l\u2019onduleur'],
+    'the on/off switch is the only writable feature',
+  );
 });
 
 test('the production and meter features use the dedicated categories', () => {
@@ -368,13 +396,107 @@ test('an optional block that fails does not break the poll', async () => {
   assert.equal(gladys.fake.connectionStatus.connected, true, 'still reachable');
 });
 
-test('onSetValue refuses every command, the integration is read-only', async () => {
-  setClientFactoryForTests(() => stubClient());
+test('onSetValue refuses the features it does not own', async () => {
+  setClientFactoryForTests(() => commandClient());
   const gladys = createFakeGladys();
   await assert.rejects(
     inverter.onSetValue(gladys, { feature: { external_id: ids(gladys).feature('power_ac') }, value: 1, config }),
-    /read-only/,
+    /No command handler/,
   );
+});
+
+test('onSetValue sends the heartbeat then the command register', async () => {
+  const client = commandClient();
+  setClientFactoryForTests(() => client);
+  const gladys = createFakeGladys();
+  const running = ids(gladys).feature('running');
+
+  await inverter.onSetValue(gladys, { feature: { external_id: running }, value: 0, config });
+  await inverter.onSetValue(gladys, { feature: { external_id: running }, value: 1, config });
+
+  assert.deepEqual(client.writes, [
+    [49999, 1], // heartbeat renews the write session
+    [40201, 0], // shutdown command (the value written is always 0)
+    [49999, 1],
+    [40200, 0], // startup command
+  ]);
+});
+
+test('onSetValue accepts the boolean spellings of the switch', async () => {
+  const client = commandClient();
+  setClientFactoryForTests(() => client);
+  const gladys = createFakeGladys();
+  const running = { external_id: ids(gladys).feature('running') };
+
+  await inverter.onSetValue(gladys, { feature: running, value: true, config });
+  await inverter.onSetValue(gladys, { feature: running, value: '1', config });
+  await inverter.onSetValue(gladys, { feature: running, value: false, config });
+  await inverter.onSetValue(gladys, { feature: running, value: '0', config });
+
+  assert.deepEqual(
+    client.writes.filter(([address]) => address !== 49999),
+    [[40200, 0], [40200, 0], [40201, 0], [40201, 0]],
+  );
+});
+
+test('onSetValue rejects a value it cannot interpret, nothing is written', async () => {
+  const client = commandClient();
+  setClientFactoryForTests(() => client);
+  const gladys = createFakeGladys();
+  await assert.rejects(
+    inverter.onSetValue(gladys, { feature: { external_id: ids(gladys).feature('running') }, value: 42, config }),
+    /Invalid on\/off value/,
+  );
+  assert.deepEqual(client.writes, [], 'no write before the value is validated');
+});
+
+test('an exception on the command register explains the permission problem', async () => {
+  const client = commandClient({
+    writeError: Object.assign(new Error('Modbus exception 2: illegal data address'), { code: 2 }),
+  });
+  setClientFactoryForTests(() => client);
+  const gladys = createFakeGladys();
+  await assert.rejects(
+    inverter.onSetValue(gladys, { feature: { external_id: ids(gladys).feature('running') }, value: 0, config }),
+    /refused the on\/off command.*(permissions|installer)/s,
+  );
+});
+
+test('a failed heartbeat does not block the command', async () => {
+  const writes = [];
+  const base = stubClient();
+  setClientFactoryForTests(() => ({
+    readRegisters: base.readRegisters,
+    writeRegister: async (address, value) => {
+      if (address === 49999) {
+        throw new Error('heartbeat refused');
+      }
+      writes.push([address, value]);
+    },
+  }));
+  const gladys = createFakeGladys();
+  await inverter.onSetValue(gladys, { feature: { external_id: ids(gladys).feature('running') }, value: 0, config });
+  assert.deepEqual(writes, [[40201, 0]], 'the shutdown command is still sent');
+});
+
+test('the running switch feedback follows the status register', async () => {
+  const gladys = createFakeGladys();
+
+  // On-grid: the switch reports ON.
+  setClientFactoryForTests(() => stubClient({ power: powerBlock({ status: 0x0200 }) }));
+  await inverter.onPoll(gladys, config);
+  assert.equal(gladys.fake.lastState(ids(gladys).feature('running')), 1);
+
+  // Shutdown (command or fault): the switch reports OFF.
+  setClientFactoryForTests(() => stubClient({ power: powerBlock({ status: 0x0301 }) }));
+  await inverter.onPoll(gladys, config);
+  assert.equal(gladys.fake.lastState(ids(gladys).feature('running')), 0);
+
+  // Standby (no irradiation) says nothing about the commanded state: the
+  // feature keeps its last known value (no new state published).
+  setClientFactoryForTests(() => stubClient({ power: powerBlock({ status: 0xa000 }) }));
+  await inverter.onPoll(gladys, config);
+  assert.equal(gladys.fake.lastState(ids(gladys).feature('running')), 0, 'standby keeps the last known value');
 });
 
 test('parseIdentity decodes model, serial and rated power', () => {

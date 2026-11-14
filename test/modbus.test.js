@@ -8,8 +8,10 @@ import assert from 'node:assert/strict';
 import {
   ModbusError,
   buildReadFrame,
+  buildWriteFrame,
   createModbusClient,
   parseReadResponse,
+  parseWriteResponse,
 } from '../src/modbus.js';
 import { normalizeConfig } from '../src/config.js';
 
@@ -38,6 +40,47 @@ test('buildReadFrame writes the MBAP header and the read request', () => {
 test('buildReadFrame refuses an out-of-range count', () => {
   assert.throws(() => buildReadFrame(1, 0, 30000, 0), /count out of range/);
   assert.throws(() => buildReadFrame(1, 0, 30000, 126), /count out of range/);
+});
+
+test('buildWriteFrame writes the MBAP header and the single-register write', () => {
+  // Startup command: write 0 to register 40200 on slave 0.
+  const frame = buildWriteFrame(2, 0, 40200, 0);
+  assert.deepEqual(
+    [...frame],
+    [0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0x00, 0x06, 0x9d, 0x08, 0x00, 0x00],
+  );
+  // Heartbeat: write 1 to the magic register 49999.
+  const heartbeat = buildWriteFrame(3, 0, 49999, 1);
+  assert.deepEqual(
+    [...heartbeat],
+    [0x00, 0x03, 0x00, 0x00, 0x00, 0x06, 0x00, 0x06, 0xc3, 0x4f, 0x00, 0x01],
+  );
+});
+
+test('buildWriteFrame refuses an out-of-range value', () => {
+  assert.throws(() => buildWriteFrame(1, 0, 40200, -1), /value out of range/);
+  assert.throws(() => buildWriteFrame(1, 0, 40200, 65536), /value out of range/);
+});
+
+test('parseWriteResponse validates the echo of address and value', () => {
+  const frame = Buffer.from([0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0x00, 0x06, 0x9d, 0x08, 0x00, 0x00]);
+  assert.doesNotThrow(() => parseWriteResponse(frame, 2, 40200, 0));
+  const wrongEcho = Buffer.from([0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0x00, 0x06, 0x9d, 0x08, 0x00, 0x01]);
+  assert.throws(() => parseWriteResponse(wrongEcho, 2, 40200, 0), /echo mismatch/);
+});
+
+test('parseWriteResponse turns an exception response into a readable error', () => {
+  // Permission denied on a refused command often comes back as exception 2.
+  const frame = Buffer.from([0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x86, 0x02]);
+  let caught;
+  try {
+    parseWriteResponse(frame, 2, 40200, 0);
+  } catch (error) {
+    caught = error;
+  }
+  assert.ok(caught instanceof ModbusError, 'a ModbusError is thrown');
+  assert.equal(caught.code, 2);
+  assert.match(caught.message, /exception 2/);
 });
 
 test('parseReadResponse decodes the registers in order', () => {

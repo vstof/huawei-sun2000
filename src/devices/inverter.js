@@ -13,6 +13,9 @@
 //   32106..32115  energy    : total yield, daily yield
 //   37100..37125  power meter (only when a Smart Power Sensor is installed):
 //                             signed grid power, feed-in and consumed energy
+//   40200, 40201  commands  : startup / shutdown (write-only, value 0)
+//   49999         heartbeat : magic register written (value 1) before a
+//                             command, it renews the write session
 //
 // Blocks are read independently: a block the inverter refuses (old firmware,
 // missing power meter, single-phase model) simply does not publish its states.
@@ -70,6 +73,7 @@ const FEATURE = {
   TEMPERATURE: 'temperature',
   STATUS: 'status',
   FAULT: 'fault',
+  RUNNING: 'running',
   METER_POWER: 'meter_power',
   METER_IMPORT_INDEX: 'meter_import_index',
   METER_EXPORT_INDEX: 'meter_export_index',
@@ -82,6 +86,16 @@ const BLOCKS = {
   power: { start: 32064, count: 27 },
   energy: { start: 32106, count: 10 },
   meter: { start: 37100, count: 26 },
+};
+
+// Command registers (write-only, per the Huawei interface definitions the
+// value written is 0 for both commands). 49999 is the undocumented "magic"
+// register the official tooling writes (value 1) before a command: it keeps
+// the write session alive. Same behavior as the Home Assistant integration.
+const COMMANDS = {
+  STARTUP: 40200,
+  SHUTDOWN: 40201,
+  HEARTBEAT: 49999,
 };
 
 // Device status (register 32089), mapped to stable enum values.
@@ -122,6 +136,20 @@ const STATUS_CODES = new Map([
   [0x0a00, 'off_grid'], // off-grid charging
   [0xa000, 'standby'], // standby: no irradiation
 ]);
+
+// Status families used for the on/off switch feedback (register 32089).
+const RUNNING_STATUS_VALUES = new Set(['starting', 'on_grid', 'on_grid_derating', 'off_grid']);
+const SHUTDOWN_STATUS_VALUES = new Set(['shutdown']);
+
+function isRunningStatus(statusCode) {
+  const value = STATUS_CODES.get(statusCode);
+  return value !== undefined && RUNNING_STATUS_VALUES.has(value);
+}
+
+function isShutdownStatus(statusCode) {
+  const value = STATUS_CODES.get(statusCode);
+  return value !== undefined && SHUTDOWN_STATUS_VALUES.has(value);
+}
 
 // Last reported connection state: setConnectionStatus is only called on a
 // change, not on every poll.
@@ -264,6 +292,18 @@ export function buildStates(ids, { identity, strings, power, energy, meter } = {
 
     addText(FEATURE.STATUS, STATUS_CODES.get(u16(power, 25)) ?? 'unknown'); // 32089
     addNumber(FEATURE.FAULT, u16(power, 26) !== 0 ? 1 : 0); // 32090 fault code
+
+    // The on/off switch feedback is derived from the status register, the only
+    // honest source (the command registers are write-only). Shutdown codes are
+    // OFF, starting/on-grid codes are ON; the standby codes ("no irradiation",
+    // initializing) say nothing about the commanded state: the feature keeps
+    // its last known value instead of being published.
+    const statusCode = u16(power, 25);
+    if (isRunningStatus(statusCode)) {
+      addNumber(FEATURE.RUNNING, 1);
+    } else if (isShutdownStatus(statusCode)) {
+      addNumber(FEATURE.RUNNING, 0);
+    }
   }
 
   if (strings) {
@@ -396,6 +436,19 @@ export const inverter = {
           has_feedback: false,
           keep_history: false,
         },
+        {
+          // On/off command (registers 40200/40201). Write-only registers: the
+          // displayed state is derived from the status register at each poll.
+          name: 'Marche / Arrêt de l\u2019onduleur',
+          external_id: ids.feature(FEATURE.RUNNING),
+          category: DEVICE_FEATURE_CATEGORIES.SWITCH,
+          type: DEVICE_FEATURE_TYPES.SWITCH.BINARY,
+          min: 0,
+          max: 1,
+          read_only: false,
+          has_feedback: true,
+          keep_history: false,
+        },
         feature('Anomalie (code défaut)', FEATURE.FAULT, DEVICE_FEATURE_CATEGORIES.SWITCH, DEVICE_FEATURE_TYPES.SWITCH.BINARY, { max: 1, keepHistory: true }),
 
         feature('Puissance réseau (compteur)', FEATURE.METER_POWER, DEVICE_FEATURE_CATEGORIES.GRID_SENSOR, DEVICE_FEATURE_TYPES.GRID_SENSOR.POWER, { unit: DEVICE_FEATURE_UNITS.WATT, min: -200000, max: 200000, keepHistory: true }),
@@ -462,10 +515,43 @@ export const inverter = {
     await reportConnection(gladys, true);
   },
 
-  async onSetValue() {
-    // Nothing on the SUN2000 is written through this integration: grid-code
-    // and power-derating registers are installer territory and stay out of
-    // Gladys' reach on purpose.
-    throw new Error('The SUN2000 integration is read-only: no feature accepts a value.');
+  async onSetValue(gladys, { feature, value, config }) {
+    const ids = gladys.externalIds(DEVICE_TYPE, PLATFORM_DEVICE_ID);
+    if (feature.external_id !== ids.feature(FEATURE.RUNNING)) {
+      throw new Error(`No command handler for ${feature.external_id}`);
+    }
+
+    const client = getClient(config);
+    const command = value === 1 || value === true || value === '1' ? COMMANDS.STARTUP : null;
+    const shutdown = value === 0 || value === false || value === '0';
+    if (command === null && !shutdown) {
+      throw new Error(`Invalid on/off value: ${value} (use 1 to start, 0 to shut down)`);
+    }
+
+    // The write session is renewed first: the undocumented register 49999 is
+    // what the official tooling writes before a command. A refusal here is
+    // only logged: the command itself tells the truth.
+    try {
+      await client.writeRegister(COMMANDS.HEARTBEAT, 1);
+    } catch (error) {
+      logger.debug(`Heartbeat write failed, trying the command anyway: ${error.message}`);
+    }
+
+    try {
+      await client.writeRegister(command ?? COMMANDS.SHUTDOWN, 0);
+    } catch (error) {
+      if (error?.code === 2 || /illegal data address/.test(String(error?.message))) {
+        // Per the Huawei interface definitions the address is right: on many
+        // firmwares this exception means the command needs installer-level
+        // rights, or the inverter refuses remote commands in its current
+        // state (some models cannot be re-enabled remotely at all, see
+        // docs/fr.md).
+        throw new Error(
+          'The inverter refused the on/off command (illegal data address): it may require ' +
+            'installer-level permissions or refuse remote commands in its current state.',
+        );
+      }
+      throw error;
+    }
   },
 };

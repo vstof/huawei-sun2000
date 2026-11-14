@@ -3,11 +3,13 @@
 //
 // The SUN2000 does not expose a REST API on its LAN endpoint: the Smart Dongle
 // (Wi-Fi module) or a SmartLogger serves the Huawei "Solar Inverter Modbus
-// Interface Definitions" over **Modbus TCP**, port 502 by default. Every value
-// is a HOLDING register (function code 0x03), and Huawei's register numbers
-// (30000, 32064...) are used as wire addresses directly.
+// Interface Definitions" over **Modbus TCP**, port 502 by default. Values are
+// HOLDING registers read with function code 0x03; the two command registers
+// (startup 40200 / shutdown 40201) are written with function code 0x06.
+// Huawei's register numbers (30000, 32064...) are used as wire addresses
+// directly.
 //
-// Connection policy: ONE TCP connection per read. The dongle is a small
+// Connection policy: ONE TCP connection per exchange. The dongle is a small
 // embedded server that silently drops idle connections and answers only one
 // master at a time — a short-lived connection per poll is the most robust
 // pattern here (no reconnect bookkeeping, no stale sockets, and the
@@ -20,6 +22,7 @@ import net from 'node:net';
 
 const PROTOCOL_ID = 0;
 const FUNCTION_READ_HOLDING = 0x03;
+const FUNCTION_WRITE_SINGLE = 0x06;
 const FUNCTION_EXCEPTION_FLAG = 0x80;
 // Modbus reads at most 125 registers per request; Huawei's own tooling stays
 // well under it. Our largest block is 75 registers.
@@ -101,6 +104,60 @@ export function parseReadResponse(frame, transactionId, count) {
 }
 
 /**
+ * Build one MBAP write request (function 0x06, write single register).
+ * @param {number} transactionId 0..65535, echoed by the server
+ * @param {number} unitId Modbus slave id (0 = directly connected device)
+ * @param {number} address register address (Huawei numbering, e.g. 40200)
+ * @param {number} value 16-bit value to write
+ * @returns {Buffer} the 12-byte frame
+ */
+export function buildWriteFrame(transactionId, unitId, address, value) {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
+    throw new ModbusError(`register value out of range: ${value}`);
+  }
+  const frame = Buffer.alloc(12);
+  frame.writeUInt16BE(transactionId, 0);
+  frame.writeUInt16BE(PROTOCOL_ID, 2);
+  frame.writeUInt16BE(6, 4); // bytes after the protocol id
+  frame.writeUInt8(unitId & 0xff, 6);
+  frame.writeUInt8(FUNCTION_WRITE_SINGLE, 7);
+  frame.writeUInt16BE(address, 8);
+  frame.writeUInt16BE(value, 10);
+  return frame;
+}
+
+/**
+ * Parse one write response (function 0x06 echoes address and value).
+ * Throws a readable ModbusError on every deviation.
+ * @param {Buffer} frame raw response
+ * @param {number} transactionId the id that was sent
+ * @param {number} address the register address that was written
+ * @param {number} value the value that was written
+ */
+export function parseWriteResponse(frame, transactionId, address, value) {
+  if (frame.length < 9) {
+    throw new ModbusError(`short response: ${frame.length} byte(s)`);
+  }
+  if (frame.readUInt16BE(0) !== transactionId) {
+    throw new ModbusError('response transaction id mismatch');
+  }
+  const functionCode = frame.readUInt8(7);
+  if (functionCode === (FUNCTION_WRITE_SINGLE | FUNCTION_EXCEPTION_FLAG)) {
+    const code = frame.length >= 9 ? frame.readUInt8(8) : 0;
+    // Huawei answers "illegal data address" on registers the inverter refuses
+    // to write: this is often a PERMISSION problem (installer-level command),
+    // not a wrong address. The name stays Modbus-accurate, the caller explains.
+    throw new ModbusError(`Modbus exception ${code}: ${EXCEPTION_MESSAGES[code] ?? 'unknown exception'}`, { code });
+  }
+  if (functionCode !== FUNCTION_WRITE_SINGLE) {
+    throw new ModbusError(`unexpected function code ${functionCode}`);
+  }
+  if (frame.readUInt16BE(8) !== address || frame.readUInt16BE(10) !== value) {
+    throw new ModbusError('write echo mismatch: the inverter did not confirm the value');
+  }
+}
+
+/**
  * Default transport: open one TCP connection, send the frame, read exactly one
  * response (the MBAP header announces its total length), close.
  * @param {object} options { timeoutMs }
@@ -164,5 +221,17 @@ export function createModbusClient(config, { transport = tcpTransport } = {}) {
     return parseReadResponse(response, transactionId, count);
   }
 
-  return { host, port, unitId, readRegisters };
+  /**
+   * Write one holding register (function 0x06).
+   * @param {number} address register address
+   * @param {number} value 16-bit value
+   */
+  async function writeRegister(address, value) {
+    transactionId = (transactionId + 1) & 0xffff;
+    const frame = buildWriteFrame(transactionId, unitId, address, value);
+    const response = await send({ host, port, frame });
+    return parseWriteResponse(response, transactionId, address, value);
+  }
+
+  return { host, port, unitId, readRegisters, writeRegister };
 }

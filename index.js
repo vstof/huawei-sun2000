@@ -39,8 +39,9 @@ gladys.onScanRequest(async () => {
 });
 
 // --- Command: the user acts on a controllable feature ------------------------
-// The integration is read-only: the blueprint throws a readable error, which
-// the SDK turns into a success:false acknowledgement.
+// Only the on/off switch (feature `running`) is writable: any other feature
+// throws a readable error, which the SDK turns into a success:false
+// acknowledgement.
 gladys.onSetValue(async (device, feature, value) => {
   logger.info(`onSetValue <- ${feature.external_id} = ${value}`);
   const blueprint = findBlueprintByDevice(gladys, device);

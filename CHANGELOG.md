@@ -2,7 +2,25 @@
 
 All notable changes to this integration are documented here.
 
-## [Unreleased]
+## [1.1.0]
+
+### Added
+
+- On/off switch for the inverter (`Marche / Arrêt de l'onduleur`): writes the
+  heartbeat register 49999 (value 1) then the startup (40200) or shutdown
+  (40201) command register with value 0, exactly like the Home Assistant
+  integration. The switch state is derived from the status register 32089
+  (shutdown codes are OFF, starting/on-grid codes are ON, standby codes keep
+  the last known value).
+- A Modbus exception (code 2) on the command register is turned into a clear
+  message: the command may require installer-level permissions.
+
+### Changed
+
+- The switch feature is the first writable feature; every other feature stays
+  read-only.
+
+## [1.0.0]
 
 ### Added
 

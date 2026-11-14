@@ -15,11 +15,28 @@ directement depuis votre réseau local, sans cloud.
 - Si un **compteur Smart Power Sensor (DTSU666)** est installé : puissance
   échangée avec le réseau (soutirée > 0, injectée < 0), énergies soutirée et
   injectée cumulées.
+- **Commande marche / arrêt** de l'onduleur via un interrupteur, avec retour
+  d'état dérivé du registre d'état.
 - Actualise les valeurs toutes les minutes (intervalle configurable de 60 s à 1 h).
 
-L'intégration est en **lecture seule** : aucun réglage de l'onduleur (codes
-réseau, bridage de puissance, redémarrage) n'est modifiable depuis Gladys —
-c'est volontaire, ces registres sont du ressort de l'installateur.
+L'intégration est en **lecture seule à une exception près** : l'interrupteur
+« Marche / Arrêt de l'onduleur ». Aucun autre réglage (codes réseau, bridage de
+puissance, horaires...) n'est modifiable depuis Gladys — c'est volontaire, ces
+registres sont du ressort de l'installateur.
+
+### ⚠️ L'arrêt à distance peut être irréversible
+
+L'écriture de la commande d'arrêt (registre 40201) est la même que celle de
+l'intégration Home Assistant — mais soyez averti : sur **certains firmwares**
+(constaté sur SUN2000-30KTL-M3, discussion wlcrs/huawei_solar #576), l'arrêt à
+distance fonctionne mais la **remise en route à distance échoue ensuite**, même
+depuis FusionSolar. La seule méthode fiable pour redémarrer est alors
+l'application mobile **SUN2000**, connectée au **Wi-Fi direct de l'onduleur**.
+
+En pratique : n'utilisez l'arrêt à distance que si vous savez redémarrer
+l'onduleur physiquement à proximité (accès au Wi-Fi direct, compte
+installateur). La commande de démarrage, elle, est sans effet sur un onduleur
+déjà en service.
 
 ## Prérequis
 
@@ -67,7 +84,7 @@ npm run build:image     # = docker build, avec le manifeste gravé dans l'image
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
-3. Collez le nom d'image : `huawei-sun2000-gladys:1.0.0`
+3. Collez le nom d'image : `huawei-sun2000-gladys:1.1.0`
    (le manifeste est lu automatiquement dans les étiquettes de l'image).
 4. Cliquez sur **Installer**.
 
@@ -104,6 +121,7 @@ elles alimentent le suivi **réseau** du même tableau de bord.
 | Connexion OK mais valeurs absentes | Mauvaise adresse esclave : essayez `1` dans la configuration |
 | Le compteur réseau ne publie rien | Aucun Smart Power Sensor installé, ou son statut n'est pas « normal » |
 | Les strings 3-4 n'apparaissent jamais | Votre modèle n'a que 2 entrées PV : normal |
+| La commande marche/arrêt échoue : « l'onduleur a refusé la commande » | La plupart des firmwares récents exigent des **droits installateur** pour ces écritures (exception Modbus « illegal data address ») : passez par FusionSolar avec le compte installateur, ou activez la configuration « autoriser les commandes à distance » côté installateur |
 | « Tester la connexion » ne répond plus le soir | L'onduleur est en veille sans irradiation : les registres restent lisibles, vérifiez plutôt le Wi-Fi du dongle |
 | Plusieurs intégrations se disputent le port 502 | Le dongle ne sert qu'**un seul maître Modbus** : ne lisez pas les registres depuis deux outils à la fois |
 
@@ -120,3 +138,10 @@ elles alimentent le suivi **réseau** du même tableau de bord.
 - L'état de l'onduleur est une **énumération** (Veille, Démarrage, Connecté au
   réseau, Puissance limitée, Hors réseau, Arrêté, Diagnostic...) : c'est ce que
   publie le registre 32089, il n'y a pas de valeur plus fine localement.
+- L'interrupteur marche/arrêt suit le même schéma que l'intégration Home
+  Assistant (wlcrs/huawei_solar) : heartbeat registre 49999 (valeur 1), puis
+  valeur 0 écrite dans 40200 (startup) ou 40201 (shutdown) — les définitions
+  Huawei précisent que la valeur des deux commandes est 0. L'état affiché est
+  dérivé du registre 32089 : codes « Arrêté » → OFF, codes « Démarrage /
+  Connecté » → ON ; en veille sans irradiation, rien n'est publié (l'état
+  affiché ne change pas).

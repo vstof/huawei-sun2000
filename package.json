@@ -1,6 +1,6 @@
 {
   "name": "gladys-integration-huawei-sun2000",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Gladys Assistant external integration for Huawei SUN2000 solar inverters (local Modbus TCP).",
   "type": "module",
