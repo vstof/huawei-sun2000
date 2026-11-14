@@ -117,7 +117,7 @@ Sans Node (Raspberry Pi par exemple), avec `jq` (`sudo apt install jq`) :
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.3.0 .
+  -t huawei-sun2000-gladys:1.4.0 .
 ```
 
 > Le script `build:image` ajoute l'étiquette `io.gladysassistant.manifest` :
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
-3. Collez le nom d'image : `huawei-sun2000-gladys:1.3.0`
+3. Collez le nom d'image : `huawei-sun2000-gladys:1.4.0`
    (le manifeste est lu automatiquement dans les étiquettes de l'image).
 4. Cliquez sur **Installer**.
 
@@ -155,6 +155,71 @@ la catégorie *capteur de production d'énergie* de Gladys : elles alimentent le
 tableau de bord **Énergie → Production**. Les fonctionnalités du compteur
 (énergie soutirée / injectée) utilisent la catégorie *capteur de réseau* :
 elles alimentent le suivi **réseau** du même tableau de bord.
+
+## Widgets du tableau de bord et statistiques
+
+L'intégration fournit **deux widgets** à poser sur un tableau de bord
+Gladys : *Tableau de bord → Éditer → Ajouter un widget → Huawei SUN2000*.
+
+### « Huawei SUN2000 » — aperçu en temps réel
+
+- **Production actuelle** : tuile vivante reliée à la mesure « Puissance
+  produite (AC) » — elle s'anime à chaque rafraîchissement du poll.
+- **Jauge** : puissance instantanée rapportée à la puissance nominale de
+  l'onduleur (lue lors du « Test de la connexion »).
+- **Aujourd'hui / Ce mois / Cette année** (kWh), issus du module
+  statistiques ci-dessous.
+- **Graphique en barres des 7 derniers jours**.
+- **Statut** : état de l'onduleur (Connecté, Veille, Arrêté...) et échange
+  réseau (Soutirage X kW / Injection X kW / Équilibré) si un Smart Power
+  Sensor est installé.
+
+### « Production Huawei SUN2000 » — statistiques
+
+- Les trois totaux (jour / mois / année) et le **compteur de vie** de
+  l'onduleur (depuis la mise en service).
+- **Graphique en barres des 30 derniers jours**.
+- La répartition **mois par mois de l'année en cours**.
+
+### Comment les statistiques sont calculées
+
+L'onduleur ne fournit que l'énergie **du jour** (registre 32114, remis à
+zéro chaque nuit) et l'énergie **totale** depuis sa mise en service. Le mois
+et l'année sont donc **cumulés par l'intégration**, jour après jour, dans un
+petit fichier JSON sous `/data` — le seul emplacement persistant du
+conteneur. Le modèle est volontairement honnête :
+
+- à la première lecture d'un nouveau jour, la journée précédente est
+  **closée** avec sa dernière valeur connue et ajoutée aux cumuls du mois et
+  de l'année ;
+- les jours où rien n'a été lu (intégration arrêtée, onduleur injoignable)
+  **n'existent pas** dans les séries : aucune valeur n'est inventée, et les
+  totaux ne comptent que l'historique observé depuis la création du fichier ;
+- dans une même journée, une lecture plus basse que la précédente est
+  ignorée (le registre du jour ne peut que monter) ;
+- le fichier est écrit atomiquement et survit aux redémarrages ; un fichier
+  corrompu repart à zéro sans faire tomber le module.
+
+Les widgets ne lisent jamais le Modbus directement : ils affichent le
+dernier relevé du poll et les cumuls de `/data`. Si aucun relevé n'a encore
+eu lieu (démarrage, onduleur éteint), les tuiles vivantes et la jauge sont
+absentes et le widget reste lisible.
+
+### Noms des appareils et des mesures
+
+Les noms du device et de ses 30 mesures sont stockés **une seule fois** par
+Gladys : il n'existe pas de mécanisme de traduction par utilisateur pour
+eux. Depuis la 1.4.0 ils sont en **anglais** par défaut (« Huawei SUN2000
+inverter », « AC power », « Daily yield »...). Votre appareil existant garde
+ses libellés actuels : pour obtenir les nouveaux, **supprimez l'appareil**
+(dans Découverte) puis recréez-le — l'intégration le redécouvre avec les
+noms anglais. Si vous préférez les noms en français, passez `LOCALE` à
+`'fr'` dans `src/i18n.js` (avec une image reconstruite) **avant** de
+recréer l'appareil.
+
+En revanche, tout ce que Gladys traduit nativement — écran de configuration,
+résultats d'actions, message de statut de connexion et **textes des
+widgets** — est fourni en deux langues et suit la langue de votre compte.
 
 ## Dépannage
 

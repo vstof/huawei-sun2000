@@ -17,6 +17,8 @@
 
 import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { normalizeConfig } from './src/config.js';
+import { t, bilingual } from './src/i18n.js';
+import { registerWidgets } from './src/widgets.js';
 import {
   DEVICE_BLUEPRINTS,
   buildDiscoveredDevices,
@@ -46,7 +48,7 @@ gladys.onSetValue(async (device, feature, value) => {
   logger.info(`onSetValue <- ${feature.external_id} = ${value}`);
   const blueprint = findBlueprintByDevice(gladys, device);
   if (!blueprint || typeof blueprint.onSetValue !== 'function') {
-    throw new Error(`No command handler for ${device.external_id}`);
+    throw new Error(`${t('no_command_handler')} (${device.external_id})`);
   }
   await blueprint.onSetValue(gladys, { device, feature, value, config });
 });
@@ -67,6 +69,12 @@ for (const blueprint of DEVICE_BLUEPRINTS) {
     gladys.onAction(actionKey, (fields) => handler(gladys, { fields, config }));
   }
 }
+
+// --- Dashboard widgets ---------------------------------------------------------
+// Two widgets (see the manifest `widgets`): the live overview and the
+// production statistics. Their content is built from the last poll snapshot
+// and the accumulated statistics (/data), never from a direct Modbus read.
+registerWidgets(gladys);
 
 // --- Configuration updated by the user ---------------------------------------
 gladys.onConfigUpdated(async (newConfig) => {
@@ -93,10 +101,7 @@ gladys.on('connected', async () => {
   } catch (err) {
     logger.error('Post-connection initialization failed', err);
     await gladys
-      .setConnectionStatus(false, {
-        en: 'Initialization failed, check the integration logs.',
-        fr: "L'initialisation a échoué, consultez les logs de l'intégration.",
-      })
+      .setConnectionStatus(false, bilingual('init_failed'))
       .catch(() => {});
   }
 });

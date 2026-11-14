@@ -29,14 +29,16 @@
 // at decoding time.
 // -----------------------------------------------------------------------------
 
+import { createLogger } from '@gladysassistant/integration-sdk';
 import {
-  createLogger,
   DEVICE_FEATURE_CATEGORIES,
   DEVICE_FEATURE_TYPES,
   DEVICE_FEATURE_UNITS,
   DEVICE_POLL_FREQUENCIES,
 } from '@gladysassistant/integration-sdk';
 import { createModbusClient } from '../modbus.js';
+import { t, messageIn, bilingualStatus } from '../i18n.js';
+import { recordDaily, localDate } from '../stats.js';
 
 const DEVICE_TYPE = 'inverter';
 
@@ -100,18 +102,19 @@ const COMMANDS = {
   HEARTBEAT: 49999,
 };
 
-// Device status (register 32089), mapped to stable enum values.
+// Device status (register 32089), mapped to stable enum values. Labels come
+// from src/i18n.js (stored once by Gladys, in the LOCALE of the integration).
 const DEVICE_STATUSES = [
-  { value: 'standby', label: 'Veille' },
-  { value: 'starting', label: 'Démarrage' },
-  { value: 'on_grid', label: 'Connecté au réseau' },
-  { value: 'on_grid_derating', label: 'Connecté (puissance limitée)' },
-  { value: 'off_grid', label: 'Hors réseau' },
-  { value: 'shutdown', label: 'Arrêté' },
-  { value: 'grid_scheduling', label: 'Planification réseau' },
-  { value: 'spot_check', label: 'Diagnostic' },
-  { value: 'unknown', label: 'Inconnu' },
-];
+  'standby',
+  'starting',
+  'on_grid',
+  'on_grid_derating',
+  'off_grid',
+  'shutdown',
+  'grid_scheduling',
+  'spot_check',
+  'unknown',
+].map((value) => ({ value, label: t(`status_${value}`) }));
 
 const STATUS_CODES = new Map([
   [0x0000, 'standby'], // standby: initializing
@@ -193,12 +196,81 @@ async function reportConnection(gladys, reachable, error) {
     }
     const reason = String(error?.message ?? error ?? 'unknown error').slice(0, 160);
     await gladys.setConnectionStatus(false, {
-      en: `Inverter unreachable: ${reason}`,
-      fr: `Onduleur injoignable : ${reason}`,
+      en: messageIn('unreachable', 'en', { reason }),
+      fr: messageIn('unreachable', 'fr', { reason }),
     });
   } catch (e) {
     // The status is cosmetic: never let it break a poll.
     logger.debug('Unable to publish the connection status', e);
+  }
+}
+
+// --- Live snapshot for the dashboard widgets -----------------------------------
+// The last poll keeps a decoded summary in memory: the widgets read it
+// (never the Modbus connection directly, which belongs to the poller).
+
+const liveSnapshot = {
+  model: null,
+  ratedPower: null,
+  acPower: null,
+  dcPower: null,
+  status: null,
+  fault: null,
+  dailyKwh: null,
+  totalKwh: null,
+  meterPower: null,
+};
+
+/**
+ * @description The external_id of one feature (dashboard widgets bind live
+ * tiles and charts to feature external ids).
+ * @param {object} gladys SDK instance
+ * @param {string} key a FEATURE key (e.g. 'power_ac')
+ */
+export function featureExternalId(gladys, key) {
+  return gladys.externalIds(DEVICE_TYPE, PLATFORM_DEVICE_ID).feature(key);
+}
+
+/**
+ * @description Forget the live snapshot (tests only: the module-level cache
+ * must not leak between tests).
+ */
+export function resetLiveSnapshotForTests() {
+  for (const key of Object.keys(liveSnapshot)) {
+    liveSnapshot[key] = null;
+  }
+}
+
+/**
+ * @description The last values read from the inverter (or `null` before the
+ * first successful read). A copy, so callers cannot mutate the cache.
+ */
+export function getLiveSnapshot() {
+  if (liveSnapshot.model === null) {
+    return null;
+  }
+  return { ...liveSnapshot };
+}
+
+function updateLiveSnapshot({ identity, power, energy, meter } = {}) {
+  if (identity) {
+    const ratedPower = u32(identity, 73); // 30073, W
+    liveSnapshot.model = ascii(identity, 0, 15) || 'SUN2000';
+    liveSnapshot.ratedPower = Number.isFinite(ratedPower) && ratedPower > 0 ? ratedPower : null;
+  }
+  if (power) {
+    const acPower = i32(power, 16);
+    liveSnapshot.acPower = acPower > 0 ? acPower : 0;
+    liveSnapshot.dcPower = Math.max(0, i32(power, 0));
+    liveSnapshot.status = STATUS_CODES.get(u16(power, 25)) ?? 'unknown';
+    liveSnapshot.fault = u16(power, 26);
+  }
+  if (energy) {
+    liveSnapshot.dailyKwh = u32(energy, 8) / 100;
+    liveSnapshot.totalKwh = u32(energy, 0) / 100;
+  }
+  if (meter && u16(meter, 0) === 1) {
+    liveSnapshot.meterPower = -i32(meter, 13);
   }
 }
 
@@ -378,7 +450,9 @@ export const inverter = {
   buildDevice(gladys, config) {
     const ids = gladys.externalIds(DEVICE_TYPE, PLATFORM_DEVICE_ID);
     const feature = (name, key, category, type, { unit, min = 0, max = 100, keepHistory = false } = {}) => ({
-      name,
+      // The display name comes from the translations (src/i18n.js): Gladys
+      // stores feature names once, they cannot be translated per user.
+      name: t(key),
       external_id: ids.feature(key),
       category,
       type,
@@ -391,7 +465,7 @@ export const inverter = {
     });
 
     return {
-      name: 'Onduleur Huawei SUN2000',
+      name: t('device_name'),
       external_id: ids.device,
       // Gladys polls the device once a minute; the user's own refresh interval
       // is applied by the poll dispatcher (createPoller in ./index.js).
@@ -427,7 +501,7 @@ export const inverter = {
         feature('Température interne', FEATURE.TEMPERATURE, DEVICE_FEATURE_CATEGORIES.TEMPERATURE_SENSOR, DEVICE_FEATURE_TYPES.SENSOR.DECIMAL, { unit: DEVICE_FEATURE_UNITS.CELSIUS, min: -50, max: 150 }),
 
         {
-          name: 'État de l\u2019onduleur',
+          name: t('status'),
           external_id: ids.feature(FEATURE.STATUS),
           category: DEVICE_FEATURE_CATEGORIES.TEXT,
           type: DEVICE_FEATURE_TYPES.TEXT.SELECT,
@@ -441,7 +515,7 @@ export const inverter = {
         {
           // On/off command (registers 40200/40201). Write-only registers: the
           // displayed state is derived from the status register at each poll.
-          name: 'Marche / Arrêt de l\u2019onduleur',
+          name: t('running'),
           external_id: ids.feature(FEATURE.RUNNING),
           category: DEVICE_FEATURE_CATEGORIES.SWITCH,
           type: DEVICE_FEATURE_TYPES.SWITCH.BINARY,
@@ -470,14 +544,20 @@ export const inverter = {
       const { model, serial, ratedPower } = parseIdentity(identity);
       const statusCode = u16(power, 25);
       const statusValue = STATUS_CODES.get(statusCode) ?? 'unknown';
-      const statusLabel = DEVICE_STATUSES.find((option) => option.value === statusValue)?.label ?? statusValue;
+      const statusLabels = bilingualStatus(statusValue);
       const fault = u16(power, 26);
       await reportConnection(gladys, true);
+      updateLiveSnapshot({ identity, power });
       const rated = ratedPower !== undefined ? (ratedPower / 1000).toFixed(1) : '?';
-      return {
-        en: `${model} (serial ${serial}, rated ${rated} kW) - status: ${statusValue}, fault code: ${fault}.`,
-        fr: `${model} (n° ${serial}, ${rated} kW nominal) - état : ${statusLabel.toLowerCase()}, code défaut : ${fault}.`,
-      };
+      const message = (locale) =>
+        messageIn('test_connection_en', locale, {
+          model,
+          serial,
+          rated,
+          status: locale === 'fr' ? statusLabels.fr.toLowerCase() : statusLabels.en.toLowerCase(),
+          fault,
+        });
+      return { en: message('en'), fr: message('fr') };
     },
   },
 
@@ -511,6 +591,16 @@ export const inverter = {
 
     const states = buildStates(ids, { power, ...optional });
     logger.debug(`Poll: ${states.length} value(s) read`);
+    // Keep the live snapshot for the dashboard widgets, and feed the
+    // production statistics with the daily-yield register (32114).
+    updateLiveSnapshot({ power, ...optional });
+    if (optional.energy) {
+      try {
+        await recordDaily(localDate(), u32(optional.energy, 8) / 100);
+      } catch (statsError) {
+        logger.debug(`Statistics update failed: ${statsError.message}`);
+      }
+    }
     if (states.length > 0) {
       await gladys.publishStates(states);
     }
@@ -520,14 +610,14 @@ export const inverter = {
   async onSetValue(gladys, { feature, value, config }) {
     const ids = gladys.externalIds(DEVICE_TYPE, PLATFORM_DEVICE_ID);
     if (feature.external_id !== ids.feature(FEATURE.RUNNING)) {
-      throw new Error(`No command handler for ${feature.external_id}`);
+      throw new Error(`${t('no_command_handler')} (${feature.external_id})`);
     }
 
     const client = getClient(config);
     const command = value === 1 || value === true || value === '1' ? COMMANDS.STARTUP : null;
     const shutdown = value === 0 || value === false || value === '0';
     if (command === null && !shutdown) {
-      throw new Error(`Invalid on/off value: ${value} (use 1 to start, 0 to shut down)`);
+      throw new Error(`${t('invalid_running_value')} (got: ${value})`);
     }
 
     // The write session is renewed first: the undocumented register 49999 is
@@ -548,10 +638,7 @@ export const inverter = {
         // rights, or the inverter refuses remote commands in its current
         // state (some models cannot be re-enabled remotely at all, see
         // docs/fr.md).
-        throw new Error(
-          'The inverter refused the on/off command (illegal data address): it may require ' +
-            'installer-level permissions or refuse remote commands in its current state.',
-        );
+        throw new Error(t('command_refused'));
       }
       throw error;
     }

@@ -36,8 +36,11 @@ In practice: only use the remote shutdown if you know how to restart the
 inverter on site (direct Wi-Fi access, installer account). The startup command,
 on the other hand, has no effect on an inverter that is already running.
 
-> The configuration screen and the device names are currently localized in
-> French; this document explains every field in English.
+> All user-facing texts — the configuration screen, the action results, the
+> connection status and every dashboard widget text — are natively
+> `{ en, fr }`: Gladys picks your account language. The device and feature
+> names are stored once and default to English (see "Device and feature
+> names" below).
 
 ## Prerequisites
 
@@ -114,7 +117,7 @@ Without Node (a Raspberry Pi for instance), with `jq` (`sudo apt install jq`):
 ```bash
 git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.3.0 .
+  -t huawei-sun2000-gladys:1.4.0 .
 ```
 
 > The `build:image` script adds the `io.gladysassistant.manifest` label: this
@@ -125,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Go to **Integrations** → the **"Install an integration"** button (GitHub).
 2. Unfold the **Developer mode** link.
-3. Paste the image name: `huawei-sun2000-gladys:1.3.0`
+3. Paste the image name: `huawei-sun2000-gladys:1.4.0`
    (the manifest is read automatically from the image labels).
 4. Click **Install**.
 
@@ -138,28 +141,91 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
    values, only to change on your installer's instruction.
 2. Click **"Test the connection"**: the model, serial number and rated power
    show up when everything is correct.
-3. Go to **Discovery**, create the **"Onduleur Huawei SUN2000"** device
-   (French name), then place it in a room.
+3. Go to **Discovery**, create the **"Huawei SUN2000 inverter"** device
+   (English name by default — see "Device and feature names" below), then
+   place it in a room.
 
 The features your installation does not carry (strings 3-4 on a two-input
 model, grid meter without a Smart Power Sensor, B-C and C-A voltages on a
 single-phase model) stay silent: no value is fabricated.
 
-Config fields (the UI labels are in French):
+Config fields (bilingual in the UI):
 
-| Label (fr) | Meaning |
+| Label (en) | Meaning |
 |---|---|
-| Adresse IP de l'onduleur | Inverter IP address or hostname |
-| Port Modbus TCP | Modbus TCP port (default 502) |
-| Adresse esclave Modbus | Modbus slave id (default 0) |
-| Intervalle de rafraîchissement (s) | Refresh interval in seconds (60 minimum) |
+| Inverter IP address | Inverter IP address or hostname |
+| Modbus TCP port | Modbus TCP port (default 502) |
+| Modbus slave id | Modbus slave id (default 0) |
+| Refresh interval (s) | Refresh interval in seconds (60 minimum) |
 
 ## The energy dashboard
 
-The "Production du jour" and "Production totale" features use the Gladys
+The "Daily yield" and "Total yield" features use the Gladys
 *energy-production-sensor* category: they feed the **Energy → Production**
 dashboard. The power meter features (imported / exported energy) use the
 *grid-sensor* category: they feed the **grid** tracking of the same dashboard.
+
+## Dashboard widgets and statistics
+
+The integration ships **two widgets** to place on a Gladys dashboard:
+*Dashboard → Edit → Add a widget → Huawei SUN2000*.
+
+### "Huawei SUN2000" — live overview
+
+- **Producing now**: a live tile bound to the "AC power" feature — it
+  animates at every poll.
+- **Gauge**: the instant power against the inverter's rated power (read on
+  the "Test the connection" action).
+- **Today / This month / This year** (kWh), from the statistics module
+  below.
+- **Bar chart of the last 7 days**.
+- **Status**: the inverter state (On grid, Standby, Shutdown...) and the
+  grid exchange (Importing X kW / Exporting X kW / Balanced) when a Smart
+  Power Sensor is installed.
+
+### "Huawei SUN2000 production" — statistics
+
+- The three totals (day / month / year) and the inverter's **lifetime
+  counter** (since commissioning).
+- **Bar chart of the last 30 days**.
+- The **month-by-month breakdown of the running year**.
+
+### How the statistics are computed
+
+The inverter only provides the **daily** energy (register 32114, reset every
+night) and the **total** energy since commissioning. The month and year
+totals are therefore **accumulated by the integration**, day after day, in a
+small JSON file under `/data` — the only persistent location of the
+container. The model is deliberately honest:
+
+- at the first reading of a new day, the previous day is **closed** with its
+  last known value and added to the month and year buckets;
+- days when nothing was read (integration stopped, inverter unreachable)
+  **do not exist** in the series: no value is invented, and the totals only
+  count the history observed since the file was created;
+- within a single day, a lower reading is ignored (the daily register only
+  goes up);
+- the file is written atomically and survives restarts; a corrupt file
+  starts clean instead of taking the module down.
+
+The widgets never read Modbus directly: they show the last poll snapshot and
+the `/data` totals. Before the first successful read (startup, inverter
+off), the live tiles and the gauge are absent and the widget stays readable.
+
+### Device and feature names
+
+The device name and its 30 feature names are stored **once** by Gladys:
+there is no per-user translation mechanism for them. Since 1.4.0 they
+default to **English** ("Huawei SUN2000 inverter", "AC power", "Daily
+yield"...). An existing device keeps its stored names: to get the new ones,
+**delete the device** (in Discovery) and create it again — the integration
+rediscovers it with the English names. If you prefer French names, set
+`LOCALE` to `'fr'` in `src/i18n.js` (with a rebuilt image) **before**
+recreating the device.
+
+Everything Gladys localizes natively — the configuration screen, the action
+results, the connection status message and the **widget texts** — is
+provided in both languages and follows your account language.
 
 ## Troubleshooting
 

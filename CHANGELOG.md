@@ -2,6 +2,43 @@
 
 All notable changes to this integration are documented here.
 
+## [1.4.0]
+
+### Added
+
+- **Two dashboard widgets** (declared in the manifest, rendered by the Gladys
+  core — no custom HTML/CSS, every text is a native `{ en, fr }` object):
+  - `huawei-overview`: live AC power tile (bound to the feature, animates at
+    each poll), a gauge against the rated power, today / month / year tiles,
+    a bar chart of the last 7 days, and status lines for the inverter state
+    and the grid exchange (importing / exporting / balanced);
+  - `huawei-production`: the three production totals, the inverter's lifetime
+    counter, a bar chart of the last 30 days and the months of the running
+    year.
+- **Production statistics per day / month / year** (`src/stats.js`): the
+  inverter only gives the daily yield (register 32114) and the lifetime total;
+  the month and year totals are accumulated locally, day after day, in a
+  JSON file under `/data` (the only writable location of the sandbox,
+  written atomically). Days when nothing was read (offline) are simply
+  absent from the series — no value is invented; a lower daily reading
+  within a day is ignored (monotonic register); a corrupt file starts clean
+  instead of crashing.
+- **Bilingual code** (`src/i18n.js`): every user-facing string moved to a
+  single translation table. Where Gladys natively localizes (config schema,
+  action results, connection status, widget texts), the code carries
+  `{ en, fr }` objects; the device and feature names — stored once by Gladys,
+  with no per-language mechanism — default to **English** (switch `LOCALE`
+  to `'fr'` in `src/i18n.js` before creating the device to store French
+  names instead).
+
+### Changed
+
+- New device and feature names in English ("Huawei SUN2000 inverter",
+  "AC power", "Daily yield"...). Existing devices keep their stored names:
+  delete the device and let the integration rediscover it to get the new
+  ones.
+- `huawei-sun2000-gladys:1.4.0` image.
+
 ## [1.3.0]
 
 ### Changed

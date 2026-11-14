@@ -26,6 +26,7 @@ import {
   setClientFactoryForTests,
 } from '../src/devices/inverter.js';
 import { normalizeConfig } from '../src/config.js';
+import { t } from '../src/i18n.js';
 
 const config = normalizeConfig({ host: '192.168.1.60' });
 
@@ -174,7 +175,7 @@ test('buildDiscoveredDevices returns the device with its features', () => {
   const devices = buildDiscoveredDevices(gladys, config);
   assert.equal(devices.length, 1);
   const [device] = devices;
-  assert.equal(device.name, 'Onduleur Huawei SUN2000');
+  assert.equal(device.name, t('device_name'));
   assert.equal(device.external_id, ids(gladys).device);
   assert.equal(device.should_poll, true);
   assert.equal(device.poll_frequency, DEVICE_POLL_FREQUENCIES.EVERY_MINUTES);
@@ -220,7 +221,7 @@ test('feature external_ids are unique and every feature declares its bounds', ()
   const writable = device.features.filter((feature) => !feature.read_only);
   assert.deepEqual(
     writable.map((feature) => feature.name),
-    ['Marche / Arrêt de l\u2019onduleur'],
+    [t('running')],
     'the on/off switch is the only writable feature',
   );
 });
@@ -229,12 +230,12 @@ test('the production and meter features use the dedicated categories', () => {
   const gladys = createFakeGladys();
   const [device] = buildDiscoveredDevices(gladys, config);
   const byKey = Object.fromEntries(device.features.map((feature) => [feature.name, feature]));
-  assert.equal(byKey['Puissance produite (AC)'].category, DEVICE_FEATURE_CATEGORIES.ENERGY_PRODUCTION_SENSOR);
-  assert.equal(byKey['Production du jour'].type, DEVICE_FEATURE_TYPES.ENERGY_PRODUCTION_SENSOR.DAILY_PRODUCTION);
-  assert.equal(byKey['Production totale'].type, DEVICE_FEATURE_TYPES.ENERGY_PRODUCTION_SENSOR.INDEX);
-  assert.equal(byKey['Puissance réseau (compteur)'].category, DEVICE_FEATURE_CATEGORIES.GRID_SENSOR);
-  assert.equal(byKey['Énergie soutirée (compteur)'].type, DEVICE_FEATURE_TYPES.GRID_SENSOR.INPUT_INDEX);
-  assert.equal(byKey['Énergie injectée (compteur)'].type, DEVICE_FEATURE_TYPES.GRID_SENSOR.OUTPUT_INDEX);
+  assert.equal(byKey[t('power_ac')].category, DEVICE_FEATURE_CATEGORIES.ENERGY_PRODUCTION_SENSOR);
+  assert.equal(byKey[t('daily_yield')].type, DEVICE_FEATURE_TYPES.ENERGY_PRODUCTION_SENSOR.DAILY_PRODUCTION);
+  assert.equal(byKey[t('total_yield')].type, DEVICE_FEATURE_TYPES.ENERGY_PRODUCTION_SENSOR.INDEX);
+  assert.equal(byKey[t('meter_power')].category, DEVICE_FEATURE_CATEGORIES.GRID_SENSOR);
+  assert.equal(byKey[t('meter_import_index')].type, DEVICE_FEATURE_TYPES.GRID_SENSOR.INPUT_INDEX);
+  assert.equal(byKey[t('meter_export_index')].type, DEVICE_FEATURE_TYPES.GRID_SENSOR.OUTPUT_INDEX);
 });
 
 test('the poller reads the device at the refresh interval of the config', async (t) => {
@@ -516,7 +517,7 @@ test('the test_connection action answers in both languages', async () => {
   assert.match(message.fr, /état : connecté au réseau/);
   assert.match(message.en, /serial HW5KTL1234/);
   assert.match(message.en, /rated 5\.0 kW/);
-  assert.match(message.en, /status: on_grid/);
+  assert.match(message.en, /state: on grid/);
 });
 
 test('findBlueprintByDevice routes the device back to its blueprint', () => {

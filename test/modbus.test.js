@@ -298,12 +298,13 @@ test('a clean close during an exchange rejects it and retries on a fresh connect
   assert.ok(sockets[0].destroyed, 'the closed socket was dropped');
 });
 
-test('the first request waits after the TCP handshake', async () => {
+test('the first request waits after the TCP handshake', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const tick = () => new Promise((resolve) => setImmediate(resolve));
   const sockets = [];
   const client = createModbusClient(config, {
     connect: connectStub(sockets, () => responderSocket({ registers: [5] })),
-    connectDelayMs: 30,
+    connectDelayMs: 1000,
   });
 
   const promise = client.readRegisters(30000, 1);
@@ -311,6 +312,7 @@ test('the first request waits after the TCP handshake', async () => {
   await tick();
   assert.equal(sockets[0].written.length, 0, 'nothing is sent right after the handshake');
 
+  t.mock.timers.tick(1000); // the post-handshake delay elapses
   const values = await promise;
   assert.deepEqual([...values], [5]);
   assert.equal(sockets[0].written.length, 1, 'the request goes out after the delay');
