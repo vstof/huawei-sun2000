@@ -69,7 +69,19 @@ déjà en service.
 
 L'intégration est un **conteneur Docker** installé par Gladys lui-même.
 
-### 1. Construire l'image (sur la machine qui fait tourner Gladys)
+### Option 1 — Installer depuis GitHub (recommandé)
+
+Gladys clone le dépôt et **construit l'image lui-même, sur la machine qui
+l'exécute** : chaque utilisateur obtient la bonne architecture (Raspberry Pi,
+mini-PC...), sans Docker Hub et sans ligne de commande.
+
+1. Allez dans **Intégrations** → bouton **« Installer une intégration »**.
+2. Dépliez **Mode développeur** et choisissez l'onglet **GitHub**.
+3. Collez l'URL du dépôt, puis cliquez sur **Installer**. Le build prend
+   quelques minutes sur un Raspberry Pi (l'image est minuscule).
+4. Passez à l'étape « Configurer » plus bas.
+
+### Option 2 — Construire l'image à la main (mode développeur)
 
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
@@ -80,7 +92,7 @@ npm run build:image     # = docker build, avec le manifeste gravé dans l'image
 > c'est là que Gladys lit le manifeste pour une installation par nom d'image.
 > Sans elle, l'installation échoue avec `MANIFEST_NOT_FOUND`.
 
-### 2. L'installer dans Gladys
+### 2bis. Installer l'image construite dans Gladys
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
@@ -91,7 +103,7 @@ npm run build:image     # = docker build, avec le manifeste gravé dans l'image
 > Gladys doit avoir accès au socket Docker (`/var/run/docker.sock`), c'est le cas
 > avec le `docker-compose.yml` officiel.
 
-### 3. Configurer
+### Configurer
 
 1. Saisissez l'**adresse IP** de l'onduleur. Port **502**, esclave **0** :
    les valeurs standard, à ne changer que sur instruction de votre installateur.

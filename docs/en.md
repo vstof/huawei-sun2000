@@ -68,7 +68,19 @@ on the other hand, has no effect on an inverter that is already running.
 
 The integration is a **Docker container** installed by Gladys itself.
 
-### 1. Build the image (on the machine running Gladys)
+### Option 1 — Install from GitHub (recommended)
+
+Gladys clones the repository and **builds the image itself, on the machine
+that runs it**: every user gets the right architecture (Raspberry Pi,
+mini-PC...), with no Docker Hub and no command line.
+
+1. Go to **Integrations** → the **"Install an integration"** button.
+2. Unfold **Developer mode** and pick the **GitHub** tab.
+3. Paste the repository URL, then click **Install**. The build takes a few
+   minutes on a Raspberry Pi (the image is tiny).
+4. Jump to the "Configure" step below.
+
+### Option 2 — Build the image by hand (developer mode)
 
 ```bash
 git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
@@ -79,7 +91,7 @@ npm run build:image     # = docker build, with the manifest baked into the image
 > is where Gladys reads the manifest for an install-by-image-name. Without it,
 > the install fails with `MANIFEST_NOT_FOUND`.
 
-### 2. Install it in Gladys
+### 2bis. Install the built image in Gladys
 
 1. Go to **Integrations** → the **"Install an integration"** button (GitHub).
 2. Unfold the **Developer mode** link.
@@ -90,7 +102,7 @@ npm run build:image     # = docker build, with the manifest baked into the image
 > Gladys must have access to the Docker socket (`/var/run/docker.sock`), which
 > is the case with the official `docker-compose.yml`.
 
-### 3. Configure
+### Configure
 
 1. Enter the inverter **IP address**. Port **502**, slave id **0**: the standard
    values, only to change on your installer's instruction.

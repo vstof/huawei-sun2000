@@ -1,6 +1,12 @@
+# Keep the build context small and free of local state: the image installs its
+# dependencies itself (npm ci inside the Dockerfile).
 node_modules
-test
-docs
-*.md
 .git
 .github
+test
+docs
+scripts
+*.tar
+*.log
+Dockerfile
+.dockerignore

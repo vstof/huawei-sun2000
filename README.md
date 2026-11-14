@@ -42,9 +42,30 @@ test/                             tests node --test
 docs/                             documentation utilisateur (hébergée par Gladys)
 ```
 
-## Construire et installer
+## Installation des utilisateurs
+
+Deux voies : **depuis GitHub** (recommandée, rien à construire) ou **par nom
+d'image** (mode développeur classique).
+
+### Option 1 — Installer depuis GitHub (recommandé)
+
+Gladys clone le dépôt et **construit l'image lui-même, sur la machine qui
+l'exécute** (Raspberry Pi, mini-PC...) : chaque utilisateur obtient la bonne
+architecture, sans Docker Hub et sans ligne de commande.
+
+1. Allez dans **Intégrations** → bouton **« Installer une intégration »**.
+2. Dépliez **Mode développeur** et choisissez l'onglet **GitHub**.
+3. Collez l'URL du dépôt, puis cliquez sur **Installer**. Le build prend
+   quelques minutes sur un Raspberry Pi (l'image est minuscule).
+4. Configurez : voir la section « Configurer » de
+   [`docs/fr.md`](docs/fr.md).
+
+### Option 2 — Installer par nom d'image (mode développeur)
+
+À la main, sur la machine qui fait tourner Gladys :
 
 ```bash
+git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 npm run build:image     # docker build + étiquette io.gladysassistant.manifest
 # variante : node scripts/build.js <image:tag>
 ```
@@ -55,6 +76,30 @@ npm run build:image     # docker build + étiquette io.gladysassistant.manifest
 
 Puis dans Gladys : **Intégrations → Installer une intégration → Mode développeur →
 image Docker** `huawei-sun2000-gladys:1.1.0`. Détails dans [`docs/fr.md`](docs/fr.md).
+
+## Publier le dépôt GitHub (mainteneur)
+
+L'intégration est conçue pour être publiée comme **dépôt autonome** (le
+manifeste doit être à la racine du dépôt par défaut) :
+
+```bash
+cd huawei-sun2000
+git init && git add -A && git commit -m "Huawei SUN2000 integration 1.1.0"
+git remote add origin git@github.com:<votre-compte>/gladys-huawei-sun2000.git
+git push -u origin main        # ou master, selon la branche créée
+```
+
+Puis sur GitHub : **Settings → General → Topics** → ajouter
+`gladys-assistant-integration` (c'est ainsi que le dépôt est reconnu comme
+intégration). Vérifier enfin que le validateur du store passe :
+
+```bash
+npx --allow-git=all github:GladysAssistant/integration-store --skip-image-check .
+```
+
+À chaque nouvelle version : bump de `package.json` + `docker_image` dans le
+manifeste (les tests le vérifient), commit, push. Les installations GitHub
+reconstruisent l'image à la version du manifeste.
 
 ## Registres utilisés
 
