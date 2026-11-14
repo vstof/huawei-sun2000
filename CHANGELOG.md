@@ -2,6 +2,30 @@
 
 All notable changes to this integration are documented here.
 
+## [1.8.0]
+
+### Added
+
+- **PV rows (strings) widget** (`huawei_strings`): live power tiles for the
+  rows the inverter reports (`String 1 power` … `String 4 power`, derived
+  from the measured U x I) and a 7-day bar chart of the **estimated energy
+  per row**. The inverter has no per-string energy counter: the module
+  integrates the measured power between polls; offline periods are not
+  counted (an estimate must not invent what was not observed).
+- Four new features: `String 1..4 power` (W, derived U x I).
+- The production widget ships as **one widget with tab-like buttons**
+  (Day / Month / Year): Gladys offers no tabs inside a widget and only one
+  focal component per content, so the three views share the chart slot. The
+  active tab is highlighted, clicking a tab resets its period to the current
+  one, and "Previous" steps back one period.
+
+### Changed
+
+- The production widget replaces the three separate `huawei_day` /
+  `huawei_month` / `huawei_year` widgets (manifest now: overview, production,
+  strings).
+- `huawei-sun2000-gladys:1.8.0` image.
+
 ## [1.7.0]
 
 ### Added
@@ -26,7 +50,7 @@ All notable changes to this integration are documented here.
 
 - The statistics file is versioned (`version: 2`): a version-1 file is
   migrated on load, its daily and monthly history is kept.
-- `huawei-sun2000-gladys:1.7.0` image.
+- `huawei-sun2000-gladys:1.8.0` image.
 
 ### Added (content of the unpublished 1.4.0 / 1.5.0 local releases)
 

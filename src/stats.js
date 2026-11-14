@@ -71,6 +71,9 @@ function emptyStore() {
     days: [],
     // Hourly profile per observed day: { 'YYYY-MM-DD': [24 kWh] }
     hours: {},
+    // Estimated energy per PV string (row) per day: { 'YYYY-MM-DD': { 1: kWh } }
+    // — an integration of the measured U x I power, not an inverter counter.
+    strings: {},
   };
 }
 
@@ -111,6 +114,18 @@ async function ensureLoaded() {
     for (const [date, profile] of Object.entries(store.hours)) {
       if (!Array.isArray(profile) || profile.length !== 24 || profile.some((h) => !Number.isFinite(h) || h < 0)) {
         delete store.hours[date];
+      }
+    }
+    if (store.strings === null || typeof store.strings !== 'object' || Array.isArray(store.strings)) {
+      store.strings = {};
+    }
+    for (const [date, rowMap] of Object.entries(store.strings)) {
+      if (
+        rowMap === null ||
+        typeof rowMap !== 'object' ||
+        Object.values(rowMap).some((kwh) => !Number.isFinite(kwh) || kwh < 0)
+      ) {
+        delete store.strings[date];
       }
     }
   } catch {
@@ -160,6 +175,67 @@ function pruneHours() {
       delete store.hours[key];
     }
   }
+  for (const key of Object.keys(store.strings)) {
+    if (key < cutoffDate) {
+      delete store.strings[key];
+    }
+  }
+}
+
+/**
+ * Book the measured power of each PV string (row) as energy: the inverter
+ * has no per-string energy counter, so this INTEGRATES the power it
+ * measures (U x I) between two polls. Gaps (offline, restart) are simply
+ * not integrated — an estimate must not invent what was not observed.
+ * @param {string} date local date YYYY-MM-DD
+ * @param {Record<number, number>} powers per-string power in W
+ * @param {number} elapsedMs time covered by this reading (ms)
+ */
+export async function recordStrings(date, powers, elapsedMs) {
+  if (!powers || typeof powers !== 'object' || !Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+    return;
+  }
+  await ensureLoaded();
+  let booked = false;
+  for (const [row, rawPower] of Object.entries(powers)) {
+    const power = Number(rawPower);
+    if (!Number.isFinite(power) || power < 0 || !/^\d+$/.test(row)) {
+      continue;
+    }
+    if (store.strings[date] === undefined || store.strings[date] === null) {
+      store.strings[date] = {};
+    }
+    // W * ms -> kWh: P(W) * t(h) / 1000 = P * ms / 3 600 000 000
+    store.strings[date][row] = (store.strings[date][row] ?? 0) + (power * elapsedMs) / 3600000000;
+    booked = true;
+  }
+  if (!booked) {
+    return;
+  }
+  pruneHours();
+  try {
+    await persist();
+  } catch {
+    // Same contract as recordDaily: a read-only /data must not break polling.
+  }
+}
+
+/**
+ * The estimated energy per string (row) of ONE day: { 1: kWh, 2: kWh } or
+ * null when that day was never observed.
+ * @param {string} dateKey YYYY-MM-DD
+ */
+export async function stringsOfDay(dateKey) {
+  const data = await ensureLoaded();
+  const rowMap = data.strings[dateKey];
+  if (!rowMap || Object.keys(rowMap).length === 0) {
+    return null;
+  }
+  const result = {};
+  for (const [row, kwh] of Object.entries(rowMap)) {
+    result[row] = kwh;
+  }
+  return result;
 }
 
 function monthKeyOfOffset(offset) {

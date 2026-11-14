@@ -38,7 +38,7 @@ import {
 } from '@gladysassistant/integration-sdk';
 import { createModbusClient } from '../modbus.js';
 import { t, messageIn, bilingualStatus } from '../i18n.js';
-import { recordDaily, localDate } from '../stats.js';
+import { recordDaily, recordStrings, localDate } from '../stats.js';
 
 const DEVICE_TYPE = 'inverter';
 
@@ -64,6 +64,10 @@ const FEATURE = {
   PV3_CURRENT: 'pv3_current',
   PV4_VOLTAGE: 'pv4_voltage',
   PV4_CURRENT: 'pv4_current',
+  PV1_POWER: 'pv1_power',
+  PV2_POWER: 'pv2_power',
+  PV3_POWER: 'pv3_power',
+  PV4_POWER: 'pv4_power',
   GRID_VOLTAGE_AB: 'grid_volt_ab',
   GRID_VOLTAGE_BC: 'grid_volt_bc',
   GRID_VOLTAGE_CA: 'grid_volt_ca',
@@ -221,10 +225,16 @@ const liveSnapshot = {
   dailyKwh: null,
   totalKwh: null,
   meterPower: null,
+  // Per-string DC power as measured (U x I): { 1: W, 2: W } — rows the
+  // inverter reports with a non-zero voltage only.
+  stringPowers: null,
 };
 
 // Last daily-register reading, to compute the per-hour delta of the stats.
 const lastReading = { date: null, kwh: null };
+
+// Last per-string power reading, to integrate the per-row energy.
+let lastStringTime = null;
 
 /**
  * @description The external_id of one feature (dashboard widgets bind live
@@ -246,6 +256,7 @@ export function resetLiveSnapshotForTests() {
   }
   lastReading.date = null;
   lastReading.kwh = null;
+  lastStringTime = null;
 }
 
 /**
@@ -262,7 +273,7 @@ export function getLiveSnapshot() {
   return { ...liveSnapshot };
 }
 
-function updateLiveSnapshot({ identity, power, energy, meter } = {}) {
+function updateLiveSnapshot({ identity, power, energy, meter, strings } = {}) {
   if (identity) {
     const ratedPower = u32(identity, 73); // 30073, W
     liveSnapshot.model = ascii(identity, 0, 15) || 'SUN2000';
@@ -285,6 +296,18 @@ function updateLiveSnapshot({ identity, power, energy, meter } = {}) {
   }
   if (meter && u16(meter, 0) === 1) {
     liveSnapshot.meterPower = -i32(meter, 13);
+  }
+  if (strings) {
+    const powers = {};
+    for (let stringIndex = 1; stringIndex <= 4; stringIndex += 1) {
+      const base = 2 * (stringIndex - 1);
+      const voltage = i16(strings, base);
+      const current = i16(strings, base + 1);
+      if (voltage > 0 && current >= 0) {
+        powers[stringIndex] = (voltage / 10) * (current / 100);
+      }
+    }
+    liveSnapshot.stringPowers = Object.keys(powers).length > 0 ? powers : null;
   }
 }
 
@@ -396,7 +419,8 @@ export function buildStates(ids, { identity, strings, power, energy, meter } = {
 
   if (strings) {
     // PV strings 1-4 (32016+, /10 V and /100 A). A string the inverter does
-    // not have reads 0 V: both its features are skipped.
+    // not have reads 0 V: its features are skipped. The per-string power is
+    // derived (U x I): the inverter measures no per-string energy.
     for (let stringIndex = 1; stringIndex <= 4; stringIndex += 1) {
       const base = 2 * (stringIndex - 1);
       const rawVoltage = i16(strings, base);
@@ -404,7 +428,9 @@ export function buildStates(ids, { identity, strings, power, energy, meter } = {
         addNumber(`pv${stringIndex}_voltage`, rawVoltage / 10);
         const rawCurrent = i16(strings, base + 1);
         if (rawCurrent >= 0) {
-          addNumber(`pv${stringIndex}_current`, rawCurrent / 100);
+          const current = rawCurrent / 100;
+          addNumber(`pv${stringIndex}_current`, current);
+          addNumber(`pv${stringIndex}_power`, (rawVoltage / 10) * current);
         }
       }
     }
@@ -500,6 +526,10 @@ export const inverter = {
         feature('Courant string 3', FEATURE.PV3_CURRENT, DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR, DEVICE_FEATURE_TYPES.ENERGY_SENSOR.CURRENT, { unit: DEVICE_FEATURE_UNITS.AMPERE, max: 100 }),
         feature('Tension string 4', FEATURE.PV4_VOLTAGE, DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR, DEVICE_FEATURE_TYPES.ENERGY_SENSOR.VOLTAGE, { unit: DEVICE_FEATURE_UNITS.VOLT, max: 1000 }),
         feature('Courant string 4', FEATURE.PV4_CURRENT, DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR, DEVICE_FEATURE_TYPES.ENERGY_SENSOR.CURRENT, { unit: DEVICE_FEATURE_UNITS.AMPERE, max: 100 }),
+        feature('Puissance string 1', FEATURE.PV1_POWER, DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR, DEVICE_FEATURE_TYPES.ENERGY_SENSOR.POWER, { unit: DEVICE_FEATURE_UNITS.WATT, max: 20000 }),
+        feature('Puissance string 2', FEATURE.PV2_POWER, DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR, DEVICE_FEATURE_TYPES.ENERGY_SENSOR.POWER, { unit: DEVICE_FEATURE_UNITS.WATT, max: 20000 }),
+        feature('Puissance string 3', FEATURE.PV3_POWER, DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR, DEVICE_FEATURE_TYPES.ENERGY_SENSOR.POWER, { unit: DEVICE_FEATURE_UNITS.WATT, max: 20000 }),
+        feature('Puissance string 4', FEATURE.PV4_POWER, DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR, DEVICE_FEATURE_TYPES.ENERGY_SENSOR.POWER, { unit: DEVICE_FEATURE_UNITS.WATT, max: 20000 }),
 
         feature('Tension réseau (A-B)', FEATURE.GRID_VOLTAGE_AB, DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR, DEVICE_FEATURE_TYPES.ENERGY_SENSOR.VOLTAGE, { unit: DEVICE_FEATURE_UNITS.VOLT, max: 1000 }),
         feature('Tension réseau (B-C)', FEATURE.GRID_VOLTAGE_BC, DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR, DEVICE_FEATURE_TYPES.ENERGY_SENSOR.VOLTAGE, { unit: DEVICE_FEATURE_UNITS.VOLT, max: 1000 }),
@@ -632,6 +662,32 @@ export const inverter = {
       } catch (statsError) {
         logger.debug(`Statistics update failed: ${statsError.message}`);
       }
+    }
+
+    // Per-row (string) energy: the inverter measures no per-string energy,
+    // so the module INTEGRATES the measured U x I power between two polls.
+    // A gap (offline, restart) is simply not integrated — an estimate must
+    // not invent what was not observed.
+    if (optional.strings) {
+      const now = Date.now();
+      const elapsed = lastStringTime === null ? 0 : now - lastStringTime;
+      if (elapsed > 0 && elapsed <= 600000) {
+        const powers = {};
+        for (let stringIndex = 1; stringIndex <= 4; stringIndex += 1) {
+          const base = 2 * (stringIndex - 1);
+          const voltage = i16(optional.strings, base);
+          const current = i16(optional.strings, base + 1);
+          if (voltage > 0 && current >= 0) {
+            powers[stringIndex] = (voltage / 10) * (current / 100);
+          }
+        }
+        try {
+          await recordStrings(localDate(), powers, elapsed);
+        } catch (statsError) {
+          logger.debug(`String statistics update failed: ${statsError.message}`);
+        }
+      }
+      lastStringTime = now;
     }
     if (states.length > 0) {
       await gladys.publishStates(states);

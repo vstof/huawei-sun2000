@@ -6,8 +6,8 @@
     "en": "Local monitoring of a Huawei SUN2000 solar inverter: production, grid data and power meter.",
     "fr": "Supervision locale d'un onduleur solaire Huawei SUN2000 : production, réseau et compteur."
   },
-  "version": "1.7.0",
-  "docker_image": "huawei-sun2000-gladys:1.7.0",
+  "version": "1.8.0",
+  "docker_image": "huawei-sun2000-gladys:1.8.0",
   "gladys_version": ">=5.1.0",
   "categories": ["energy"],
   "transports": ["local"],
@@ -19,30 +19,21 @@
       "settings": []
     },
     {
-      "key": "huawei_day",
+      "key": "huawei_production",
       "label": {
-        "en": "Huawei SUN2000 — Day",
-        "fr": "Huawei SUN2000 — Journée"
-      },
-      "icon": "calendar",
-      "settings": []
-    },
-    {
-      "key": "huawei_month",
-      "label": {
-        "en": "Huawei SUN2000 — Month",
-        "fr": "Huawei SUN2000 — Mois"
+        "en": "Huawei SUN2000 — Production",
+        "fr": "Huawei SUN2000 — Production"
       },
       "icon": "bar-chart-2",
       "settings": []
     },
     {
-      "key": "huawei_year",
+      "key": "huawei_strings",
       "label": {
-        "en": "Huawei SUN2000 — Year",
-        "fr": "Huawei SUN2000 — Année"
+        "en": "Huawei SUN2000 — PV rows",
+        "fr": "Huawei SUN2000 — Rangées PV"
       },
-      "icon": "trending-up",
+      "icon": "zap",
       "settings": []
     }
   ],

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 // Dashboard widgets (declared in the manifest `widgets`, rendered by Gladys).
 //
-// Four widgets, fed by the live snapshot the poller keeps in memory
+// Three widgets, fed by the live snapshot the poller keeps in memory
 // (src/devices/inverter.js) and by the accumulated statistics (/data,
 // src/stats.js):
 //
@@ -9,21 +9,22 @@
 //     gauge against the rated power), internal temperature and DC input
 //     tiles, the last 7 days as bars, the inverter / grid status lines and
 //     start / stop buttons;
-//   - "huawei_day" / "huawei_month" / "huawei_year": the production of one
-//     period (per hour / per day / per month), navigable with previous /
-//     next / today buttons, with the equivalent previous-year period drawn
-//     alongside (month and year widgets).
+//   - "huawei_production": ONE widget with tab-like buttons (Day / Month /
+//     Year) switching the single chart — Gladys offers no tabs inside a
+//     widget and only one focal component, so the views share the chart slot;
+//   - "huawei_strings": the PV rows — live per-string power tiles and the
+//     estimated energy per row over the last days.
 //
 // Every text is a multi-language `{ en, fr }` object: Gladys picks the
 // requesting user's language. The vocabulary carries no free HTML/CSS, so the
 // "animation" is the core's own rendering: live tiles update with the poll,
 // and the gauge/chart components are rendered (and transitioned) by the core.
 //
-// Navigation: the core offers no tabs, but a `button` can carry a widget
-// ACTION (onWidgetAction). Our nav buttons shift an in-memory offset for the
-// widget, then fire requestWidgetRefresh so every open instance re-pulls the
-// content. The offset resets on container restart (back to "today") and is
-// shared by every instance of the same widget key.
+// Navigation: a `button` can carry a widget ACTION (onWidgetAction). The nav
+// buttons shift an in-memory offset for the current view, then fire
+// requestWidgetRefresh so every open instance re-pulls the content. The
+// offset resets on container restart (back to "today") and is shared by
+// every instance of the widget key.
 // -----------------------------------------------------------------------------
 
 import { WIDGET_COLORS } from '@gladysassistant/integration-sdk';
@@ -35,6 +36,7 @@ import {
   hourlyFor,
   daysOfMonth,
   monthsOfYear,
+  stringsOfDay,
   dataBounds,
   addDays,
   addMonths,
@@ -45,9 +47,8 @@ import { getLiveSnapshot, featureExternalId } from './devices/inverter.js';
 
 export const WIDGET_KEYS = {
   overview: 'huawei_overview',
-  day: 'huawei_day',
-  month: 'huawei_month',
-  year: 'huawei_year',
+  production: 'huawei_production',
+  strings: 'huawei_strings',
 };
 
 const W = WIDGET_COLORS;
@@ -89,9 +90,9 @@ const round = (value, digits = 2) => {
 };
 
 /** Bar series from closed-day entries [{ date, kwh }] (t = ISO date). */
-function dailySeries(entries) {
+function dailySeries(entries, name) {
   return {
-    name: { en: 'Daily production', fr: 'Production quotidienne' },
+    name: name ?? { en: 'Daily production', fr: 'Production quotidienne' },
     points: entries.map((entry) => ({ t: entry.date, v: round(entry.kwh) })),
   };
 }
@@ -133,39 +134,21 @@ function statusText(language, status) {
 }
 
 // --- Navigation state ----------------------------------------------------------
-// One offset per widget key, in memory (back to "today" after a restart).
-// Instances of the same widget key share the offset: acceptable — the
-// core sends no instance identifier with onWidgetGet/onWidgetAction.
+// The production widget's view (day / month / year) and one period offset per
+// view, in memory (back to "today" after a restart). Instances of the widget
+// key share the state: the core sends no instance identifier with
+// onWidgetGet/onWidgetAction.
 
+const VIEWS = ['day', 'month', 'year'];
+let productionView = 'day';
 const periodOffset = new Map();
 
-const offsetOf = (key) => periodOffset.get(key) ?? 0;
+const offsetKey = (view) => `production:${view}`;
+const offsetOf = (view) => periodOffset.get(offsetKey(view)) ?? 0;
 
 export function resetNavStateForTests() {
   periodOffset.clear();
-}
-
-/**
- * Clamp an offset to the data actually recorded.
- * @param {string} key widget key
- * @param {number} offset requested (<= 0)
- */
-async function clampOffset(key, offset) {
-  const bounds = await dataBounds();
-  const today = localDate();
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const currentYear = String(now.getFullYear());
-  if (key === WIDGET_KEYS.day) {
-    const min = bounds.firstDay ? -dayDiff(bounds.firstDay, today) : 0;
-    return Math.min(0, Math.max(min, offset));
-  }
-  if (key === WIDGET_KEYS.month) {
-    const min = bounds.firstMonth ? -monthDiff(bounds.firstMonth, currentMonth) : 0;
-    return Math.min(0, Math.max(min, offset));
-  }
-  const min = bounds.firstYear ? Number(bounds.firstYear) - Number(currentYear) : 0;
-  return Math.min(0, Math.max(min, offset));
+  productionView = 'day';
 }
 
 /** Whole months between two YYYY-MM keys (b - a). */
@@ -176,56 +159,29 @@ function monthDiff(a, b) {
 }
 
 /**
- * Handle a navigation action of a period widget (buttons carry
- * `action: { key: 'nav', params: { dir } }` or `key: 'today'`). Shifts the
- * in-memory offset, nudges the core to re-render, and answers with a toast.
+ * Clamp a period offset (<= 0) to the data actually recorded.
+ * @param {string} view 'day' | 'month' | 'year'
+ * @param {number} offset requested
  */
-async function handlePeriodAction(gladys, key, actionKey, params) {
-  const dir = params?.dir === 1 ? 1 : -1;
-  const requested = actionKey === 'today' ? 0 : offsetOf(key) + dir;
-  const clamped = await clampOffset(key, requested);
-  const blocked = clamped !== requested;
-  periodOffset.set(key, clamped);
-  try {
-    gladys.requestWidgetRefresh(key);
-  } catch {
-    // The nudge is fire-and-forget: the TTL re-renders anyway.
+async function clampOffset(view, offset) {
+  const bounds = await dataBounds();
+  const today = localDate();
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const currentYear = String(now.getFullYear());
+  if (view === 'day') {
+    const min = bounds.firstDay ? -dayDiff(bounds.firstDay, today) : 0;
+    return Math.min(0, Math.max(min, offset));
   }
-  if (actionKey === 'today') {
-    return { en: 'Back to today', fr: 'Retour à aujourd\u2019hui' };
+  if (view === 'month') {
+    const min = bounds.firstMonth ? -monthDiff(bounds.firstMonth, currentMonth) : 0;
+    return Math.min(0, Math.max(min, offset));
   }
-  const forward = dir === 1;
-  const moved = !blocked;
-  const period = {
-    [WIDGET_KEYS.day]: { en: 'day', fr: 'jour' },
-    [WIDGET_KEYS.month]: { en: 'month', fr: 'mois' },
-    [WIDGET_KEYS.year]: { en: 'year', fr: 'année' },
-  }[key];
-  if (!moved) {
-    return {
-      en: `No recorded data ${forward ? 'beyond' : 'before'} this period`,
-      fr: `Pas de données enregistrées ${forward ? 'au-delà' : 'avant'} cette période`,
-    };
-  }
-  const articleEn = forward ? 'next' : 'previous';
-  const articleFr = forward ? 'suivant' : 'précédent';
-  return {
-    en: `Showing the ${articleEn} ${period.en}`,
-    fr: `${period.fr.charAt(0).toUpperCase()}${period.fr.slice(1)} ${articleFr} affiché`,
-  };
+  const min = bounds.firstYear ? Number(bounds.firstYear) - Number(currentYear) : 0;
+  return Math.min(0, Math.max(min, offset));
 }
 
-/**
- * The nav buttons of a period widget (≤ 4 buttons in the budget).
- * @param {{prev: object, next: object, today: object}} labels
- */
-function navButtons(labels) {
-  return [
-    { type: 'button', label: labels.prev, icon: 'chevron-left', action: { key: 'nav', params: { dir: -1 } } },
-    { type: 'button', label: labels.today, icon: 'rotate-ccw', action: { key: 'today' } },
-    { type: 'button', label: labels.next, icon: 'chevron-right', action: { key: 'nav', params: { dir: 1 } } },
-  ];
-}
+// --- The overview widget --------------------------------------------------------
 
 /**
  * The live overview widget.
@@ -343,231 +299,328 @@ export async function overviewWidget(gladys, { language = 'en' } = {}) {
   return { ttl_seconds: 60, components };
 }
 
-// --- The three period widgets ---------------------------------------------------
+// --- The production widget (one widget, tab-like views) --------------------------
 
-/**
- * The "day" widget: the selected day per hour, navigable.
- */
-export async function dayWidget(gladys, { language = 'en' } = {}) {
-  const today = localDate();
-  const offset = await clampOffset(WIDGET_KEYS.day, offsetOf(WIDGET_KEYS.day));
-  periodOffset.set(WIDGET_KEYS.day, offset);
-  const date = addDays(today, offset);
+/** Tab labels of the views (also the "switch view" buttons). */
+const VIEW_TABS = {
+  day: { en: 'Day', fr: 'Jour' },
+  month: { en: 'Month', fr: 'Mois' },
+  year: { en: 'Year', fr: 'Année' },
+};
 
-  const [total, hourly] = await Promise.all([dayTotal(date), hourlyFor(date)]);
-  const components = [];
-
-  if (total !== null) {
-    components.push({
-      type: 'value',
-      value: round(total),
-      unit: 'kWh',
-      label: { en: 'Day total', fr: 'Total du jour' },
-      icon: 'sun',
-      color: W.SUCCESS,
-    });
-  }
-
-  if (hourly) {
-    components.push({
-      type: 'chart',
-      chart_type: 'bar',
-      title: { en: dayLabel(date, 'en'), fr: dayLabel(date, 'fr') },
-      unit: 'kWh',
-      series: [
-        {
-          name: { en: 'Hourly production', fr: 'Production horaire' },
-          points: hourly.map((kwh, hour) => ({
-            t: `${date}T${String(hour).padStart(2, '0')}:00:00`,
-            v: round(kwh),
-          })),
-        },
-      ],
-    });
-  } else {
-    components.push({
-      type: 'text',
-      variant: 'caption',
-      text: {
-        en: `No hourly detail recorded for ${dayLabel(date, 'en')} (recording started with this version).`,
-        fr: `Pas de détail horaire enregistré pour le ${dayLabel(date, 'fr')} (l'enregistrement a commencé avec cette version).`,
-      },
-    });
-  }
-
-  components.push(...navButtons({
-    prev: { en: 'Previous day', fr: 'Jour précédent' },
-    today: { en: 'Today', fr: 'Aujourd\u2019hui' },
-    next: { en: 'Next day', fr: 'Jour suivant' },
+function viewButtons(currentView) {
+  return VIEWS.map((view) => ({
+    type: 'button',
+    label: VIEW_TABS[view],
+    icon: view === 'day' ? 'sunrise' : view === 'month' ? 'calendar' : 'bar-chart-2',
+    style: view === currentView ? 'primary' : 'secondary',
+    action: { key: 'view', params: { view } },
   }));
-  return { ttl_seconds: 60, components };
 }
 
 /**
- * The "month" widget: the selected month per day, with the same month of the
- * previous year drawn alongside, navigable.
+ * Handle the production widget actions: `view` (switch tab, resets the
+ * period) and `nav` (previous period of the current view). Shifts the
+ * in-memory state, nudges the core to re-render, answers with a toast.
  */
-export async function monthWidget(gladys, { language = 'en' } = {}) {
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const offset = await clampOffset(WIDGET_KEYS.month, offsetOf(WIDGET_KEYS.month));
-  periodOffset.set(WIDGET_KEYS.month, offset);
-  const month = addMonths(currentMonth, offset);
-  const previousYearMonth = addMonths(month, -12);
+async function handleProductionAction(actionKey, params) {
+  if (actionKey === 'view' && VIEWS.includes(params?.view)) {
+    productionView = params.view;
+    periodOffset.set(offsetKey(productionView), 0);
+    return finishAction('view');
+  }
+  // 'nav': one period back in the current view.
+  const requested = offsetOf(productionView) - 1;
+  const clamped = await clampOffset(productionView, requested);
+  const blocked = clamped !== requested;
+  periodOffset.set(offsetKey(productionView), clamped);
+  return finishAction(blocked ? 'blocked' : 'nav');
+}
 
-  const [total, days, previousYearDays] = await Promise.all([
-    monthTotal(month),
-    daysOfMonth(month),
-    daysOfMonth(previousYearMonth),
-  ]);
+function finishAction(kind) {
+  try {
+    // The nudge is fire-and-forget: the TTL re-renders anyway.
+    globalRefresh?.();
+  } catch {
+    /* fire-and-forget */
+  }
+  const viewLabels = {
+    day: { en: 'day', fr: 'jour' },
+    month: { en: 'month', fr: 'mois' },
+    year: { en: 'year', fr: 'année' },
+  }[productionView];
+  if (kind === 'view') {
+    return {
+      en: `Showing the ${viewLabels.en} view`,
+      fr: `Vue ${viewLabels.fr} affichée`,
+    };
+  }
+  if (kind === 'blocked') {
+    return {
+      en: 'No recorded data before this period',
+      fr: 'Pas de données enregistrées avant cette période',
+    };
+  }
+  return {
+    en: `Showing the previous ${viewLabels.en}`,
+    fr: `${viewLabels.fr.charAt(0).toUpperCase()}${viewLabels.fr.slice(1)} précédent affiché`,
+  };
+}
+
+// Set by registerWidgets: the refresh closure of the production widget key.
+let globalRefresh = null;
+
+/**
+ * The production widget: total of the shown period, the chart of the current
+ * view (hourly / per day / per month), the months list in month view, and
+ * the tab-like buttons + previous period.
+ */
+export async function productionWidget(gladys, { language = 'en' } = {}) {
+  const view = productionView;
+  const offset = await clampOffset(view, offsetOf(view));
+  periodOffset.set(offsetKey(view), offset);
+  const now = new Date();
   const components = [];
 
-  if (total !== null) {
-    components.push({
-      type: 'value',
-      value: round(total),
-      unit: 'kWh',
-      label: { en: 'Month total', fr: 'Total du mois' },
-      icon: 'calendar',
-      color: W.SUCCESS,
-    });
-  }
-
-  if (days.length > 0) {
-    // The previous-year twin is drawn ON THE SAME AXIS POSITIONS (same day
-    // numbers): two clusters one year apart would leave a year of empty
-    // axis between them.
-    const sameAxis = (entry) => ({ t: `${month}-${entry.date.slice(8)}`, v: round(entry.kwh) });
-    const series = [dailySeries(days)];
-    if (previousYearDays.length > 0) {
-      series.push({
-        name: { en: `${monthLabelLong(previousYearMonth, 'en')} (previous year)`, fr: `${monthLabelLong(previousYearMonth, 'fr')} (année précédente)` },
-        points: previousYearDays.map(sameAxis),
-      });
-    }
-    components.push({
-      type: 'chart',
-      chart_type: 'bar',
-      title: { en: monthLabelLong(month, 'en'), fr: monthLabelLong(month, 'fr') },
-      unit: 'kWh',
-      series,
-    });
-  } else {
-    components.push({
-      type: 'text',
-      variant: 'caption',
-      text: {
-        en: `No production recorded for ${monthLabelLong(month, 'en')} yet.`,
-        fr: `Aucune production enregistrée pour ${monthLabelLong(month, 'fr')} pour l'instant.`,
-      },
-    });
-  }
-
-  // The months of the running year as a compact list: the comparison the
-  // user reads at a glance without navigating.
-  const yearMonths = await monthsOfYear(month.slice(0, 4));
-  if (yearMonths.length > 0) {
-    components.push({
-      type: 'status',
-      items: yearMonths.map((entry) => ({
-        label: { en: monthLabelLong(entry.month, 'en'), fr: monthLabelLong(entry.month, 'fr') },
-        value: round(entry.kwh),
+  if (view === 'day') {
+    const today = localDate();
+    const date = addDays(today, offset);
+    const [total, hourly] = await Promise.all([dayTotal(date), hourlyFor(date)]);
+    if (total !== null) {
+      components.push({
+        type: 'value',
+        value: round(total),
+        unit: 'kWh',
+        label: { en: 'Day total', fr: 'Total du jour' },
+        icon: 'sun',
         color: W.SUCCESS,
-      })),
-    });
+      });
+    }
+    if (hourly) {
+      components.push({
+        type: 'chart',
+        chart_type: 'bar',
+        title: { en: dayLabel(date, 'en'), fr: dayLabel(date, 'fr') },
+        unit: 'kWh',
+        series: [
+          {
+            name: { en: 'Hourly production', fr: 'Production horaire' },
+            points: hourly.map((kwh, hour) => ({
+              t: `${date}T${String(hour).padStart(2, '0')}:00:00`,
+              v: round(kwh),
+            })),
+          },
+        ],
+      });
+    } else {
+      components.push({
+        type: 'text',
+        variant: 'caption',
+        text: {
+          en: `No hourly detail recorded for ${dayLabel(date, 'en')} (recording started with this version).`,
+          fr: `Pas de détail horaire enregistré pour le ${dayLabel(date, 'fr')} (l'enregistrement a commencé avec cette version).`,
+        },
+      });
+    }
+  } else if (view === 'month') {
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const month = addMonths(currentMonth, offset);
+    const previousYearMonth = addMonths(month, -12);
+    const [total, days, previousYearDays] = await Promise.all([
+      monthTotal(month),
+      daysOfMonth(month),
+      daysOfMonth(previousYearMonth),
+    ]);
+    if (total !== null) {
+      components.push({
+        type: 'value',
+        value: round(total),
+        unit: 'kWh',
+        label: { en: 'Month total', fr: 'Total du mois' },
+        icon: 'calendar',
+        color: W.SUCCESS,
+      });
+    }
+    if (days.length > 0) {
+      // The previous-year twin is drawn ON THE SAME AXIS POSITIONS (same day
+      // numbers): two clusters one year apart would leave a year of empty
+      // axis between them.
+      const sameAxis = (entry) => ({ t: `${month}-${entry.date.slice(8)}`, v: round(entry.kwh) });
+      const series = [dailySeries(days)];
+      if (previousYearDays.length > 0) {
+        series.push({
+          name: {
+            en: `${monthLabelLong(previousYearMonth, 'en')} (previous year)`,
+            fr: `${monthLabelLong(previousYearMonth, 'fr')} (année précédente)`,
+          },
+          points: previousYearDays.map(sameAxis),
+        });
+      }
+      components.push({
+        type: 'chart',
+        chart_type: 'bar',
+        title: { en: monthLabelLong(month, 'en'), fr: monthLabelLong(month, 'fr') },
+        unit: 'kWh',
+        series,
+      });
+    } else {
+      components.push({
+        type: 'text',
+        variant: 'caption',
+        text: {
+          en: `No production recorded for ${monthLabelLong(month, 'en')} yet.`,
+          fr: `Aucune production enregistrée pour ${monthLabelLong(month, 'fr')} pour l'instant.`,
+        },
+      });
+    }
+    // The months of the running year as a compact list: the comparison the
+    // user reads at a glance without navigating.
+    const yearMonths = await monthsOfYear(month.slice(0, 4));
+    if (yearMonths.length > 0) {
+      components.push({
+        type: 'status',
+        items: yearMonths.map((entry) => ({
+          label: { en: monthLabelLong(entry.month, 'en'), fr: monthLabelLong(entry.month, 'fr') },
+          value: round(entry.kwh),
+          color: W.SUCCESS,
+        })),
+      });
+    }
+  } else {
+    const currentYear = String(now.getFullYear());
+    const year = String(Number(currentYear) + offset);
+    const previousYear = String(Number(year) - 1);
+    const [total, months, previousYearMonths] = await Promise.all([
+      yearTotal(year),
+      monthsOfYear(year),
+      monthsOfYear(previousYear),
+    ]);
+    if (total !== null) {
+      components.push({
+        type: 'value',
+        value: round(total),
+        unit: 'kWh',
+        label: { en: 'Year total', fr: "Total de l'année" },
+        icon: 'calendar',
+        color: W.SUCCESS,
+      });
+    }
+    if (months.length > 0) {
+      // Month points carry a full ISO date; the previous-year twin sits on
+      // the SAME month positions (a year-apart cluster would leave a year of
+      // empty axis between the two series).
+      const series = [
+        {
+          name: { en: 'Monthly production', fr: 'Production mensuelle' },
+          points: months.map((entry) => ({ t: `${entry.month}-01`, v: round(entry.kwh) })),
+        },
+      ];
+      if (previousYearMonths.length > 0) {
+        series.push({
+          name: { en: `${previousYear} (previous year)`, fr: `${previousYear} (année précédente)` },
+          points: previousYearMonths.map((entry) => ({ t: `${year}-${entry.month.slice(5)}-01`, v: round(entry.kwh) })),
+        });
+      }
+      components.push({
+        type: 'chart',
+        chart_type: 'bar',
+        title: { en: year, fr: year },
+        unit: 'kWh',
+        series,
+      });
+    } else {
+      components.push({
+        type: 'text',
+        variant: 'caption',
+        text: {
+          en: `No production recorded for ${year} yet.`,
+          fr: `Aucune production enregistrée pour ${year} pour l'instant.`,
+        },
+      });
+    }
   }
 
-  components.push(...navButtons({
-    prev: { en: 'Previous month', fr: 'Mois précédent' },
-    today: { en: 'This month', fr: 'Ce mois' },
-    next: { en: 'Next month', fr: 'Mois suivant' },
-  }));
+  // Tab-like buttons (switch view = also "back to the current period"), then
+  // one step back in the current view. Gladys allows 4 buttons per content.
+  components.push(
+    ...viewButtons(view),
+    {
+      type: 'button',
+      label: { en: 'Previous', fr: 'Précédent' },
+      icon: 'chevron-left',
+      action: { key: 'nav', params: { dir: -1 } },
+    },
+  );
+
   return { ttl_seconds: 60, components };
 }
 
-/**
- * The "year" widget: the selected year per month, with the previous year
- * drawn alongside, navigable.
- */
-export async function yearWidget(gladys, { language = 'en' } = {}) {
-  const now = new Date();
-  const currentYear = String(now.getFullYear());
-  const offset = await clampOffset(WIDGET_KEYS.year, offsetOf(WIDGET_KEYS.year));
-  periodOffset.set(WIDGET_KEYS.year, offset);
-  const year = String(Number(currentYear) + offset);
-  const previousYear = String(Number(year) - 1);
+// --- The strings (PV rows) widget ------------------------------------------------
 
-  const [total, months, previousYearMonths] = await Promise.all([
-    yearTotal(year),
-    monthsOfYear(year),
-    monthsOfYear(previousYear),
-  ]);
+/**
+ * The PV rows widget: live per-string power tiles (U x I as measured by the
+ * inverter) and the estimated energy per row over the last 7 days.
+ */
+export async function stringsWidget(gladys, { language = 'en' } = {}) {
+  const live = getLiveSnapshot();
   const components = [];
 
-  if (total !== null) {
+  // Live tiles for the strings the inverter actually reports (a row with no
+  // data never appears).
+  const rows = live?.stringPowers ? Object.keys(live.stringPowers).map(Number).sort((a, b) => a - b) : [];
+  for (const row of rows.slice(0, 4)) {
     components.push({
       type: 'value',
-      value: round(total),
-      unit: 'kWh',
-      label: { en: 'Year total', fr: "Total de l'année" },
-      icon: 'calendar',
-      color: W.SUCCESS,
+      device_feature: featureExternalId(gladys, `pv${row}_power`),
+      label: { en: `String ${row}`, fr: `Rangée ${row}` },
+      icon: 'zap',
+      color: row === 1 ? W.PRIMARY : W.INFO,
     });
   }
 
-  if (months.length > 0) {
-    // Month points carry a full ISO date; the previous-year twin sits on the
-    // SAME month positions (a year-apart cluster would leave a year of
-    // empty axis between the two series).
-    const series = [
-      {
-        name: { en: 'Monthly production', fr: 'Production mensuelle' },
-        points: months.map((entry) => ({ t: `${entry.month}-01`, v: round(entry.kwh) })),
-      },
-    ];
-    if (previousYearMonths.length > 0) {
-      series.push({
-        name: { en: `${previousYear} (previous year)`, fr: `${previousYear} (année précédente)` },
-        points: previousYearMonths.map((entry) => ({ t: `${year}-${entry.month.slice(5)}-01`, v: round(entry.kwh) })),
-      });
-    }
+  // Estimated energy per row, last 7 days (two series, one per row).
+  const dates = [];
+  const today = localDate();
+  for (let offset = -6; offset <= 0; offset += 1) {
+    dates.push(addDays(today, offset));
+  }
+  const perDay = await Promise.all(dates.map((date) => stringsOfDay(date)));
+  const observed = perDay.filter((entry) => entry !== null);
+  if (observed.length > 0 && rows.length > 0) {
+    const series = rows.slice(0, 4).map((row) => ({
+      name: { en: `String ${row}`, fr: `Rangée ${row}` },
+      points: dates.map((date, index) => ({
+        t: date,
+        v: round(perDay[index]?.[String(row)] ?? 0),
+      })),
+    }));
     components.push({
       type: 'chart',
       chart_type: 'bar',
-      title: { en: year, fr: year },
+      title: { en: 'Estimated energy per string (7 days)', fr: 'Énergie estimée par rangée (7 jours)' },
       unit: 'kWh',
       series,
+    });
+    components.push({
+      type: 'text',
+      variant: 'caption',
+      text: {
+        en: 'Estimated from the measured string power (U x I) at each poll; offline periods are not counted.',
+        fr: 'Estimé à partir de la puissance mesurée (U x I) à chaque relevé ; les périodes hors ligne ne sont pas comptées.',
+      },
     });
   } else {
     components.push({
       type: 'text',
       variant: 'caption',
       text: {
-        en: `No production recorded for ${year} yet.`,
-        fr: `Aucune production enregistrée pour ${year} pour l'instant.`,
+        en: 'No per-string data yet (the string registers read 0 at night or are not served by the firmware).',
+        fr: 'Pas encore de données par rangée (les registres strings lisent 0 la nuit ou ne sont pas servis par le firmware).',
       },
     });
   }
 
-  components.push(...navButtons({
-    prev: { en: 'Previous year', fr: 'Année précédente' },
-    today: { en: 'This year', fr: 'Cette année' },
-    next: { en: 'Next year', fr: 'Année suivante' },
-  }));
   return { ttl_seconds: 60, components };
-}
-
-/**
- * Dispatch a period widget by key.
- */
-export function periodWidget(gladys, key, options = {}) {
-  if (key === WIDGET_KEYS.day) {
-    return dayWidget(gladys, options);
-  }
-  if (key === WIDGET_KEYS.month) {
-    return monthWidget(gladys, options);
-  }
-  return yearWidget(gladys, options);
 }
 
 /**
@@ -576,8 +629,10 @@ export function periodWidget(gladys, key, options = {}) {
  */
 export function registerWidgets(gladys) {
   gladys.onWidgetGet(WIDGET_KEYS.overview, (options) => overviewWidget(gladys, options ?? {}));
-  for (const key of [WIDGET_KEYS.day, WIDGET_KEYS.month, WIDGET_KEYS.year]) {
-    gladys.onWidgetGet(key, (options) => periodWidget(gladys, key, options ?? {}));
-    gladys.onWidgetAction(key, (actionKey, params) => handlePeriodAction(gladys, key, actionKey, params));
-  }
+  gladys.onWidgetGet(WIDGET_KEYS.production, (options) => productionWidget(gladys, options ?? {}));
+  gladys.onWidgetGet(WIDGET_KEYS.strings, (options) => stringsWidget(gladys, options ?? {}));
+  globalRefresh = () => gladys.requestWidgetRefresh(WIDGET_KEYS.production);
+  gladys.onWidgetAction(WIDGET_KEYS.production, (actionKey, params) =>
+    handleProductionAction(actionKey, params),
+  );
 }

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { localDate, recordDaily, resetStats, setStatsDir, snapshot, hourlyFor, dayTotal, monthTotal, yearTotal, daysOfMonth, monthsOfYear, dataBounds, addDays, dayDiff } from '../src/stats.js';
+import { localDate, recordDaily, recordStrings, stringsOfDay, resetStats, setStatsDir, snapshot, hourlyFor, dayTotal, monthTotal, yearTotal, daysOfMonth, monthsOfYear, dataBounds, addDays, dayDiff } from '../src/stats.js';
 
 const DAYS = ['2026-01-30', '2026-01-31', '2026-02-01'];
 
@@ -269,4 +269,23 @@ test('addDays and dayDiff compute over UTC days', async () => {
   assert.equal(addDays('2026-03-01', -1), '2026-02-28');
   assert.equal(dayDiff('2026-01-30', '2026-02-01'), 2);
   assert.equal(dayDiff('2026-02-01', '2026-01-30'), -2);
+});
+
+test('recordStrings integrates the per-row power into kWh', async () => {
+  const dir = await tempDir();
+  setStatsDir(dir);
+  const day = localDate(); // recent: the 40-day retention keeps it
+  // 9000 W over one hour = 9 kWh.
+  await recordStrings(day, { 1: 9000, 2: 7600 }, 3600000);
+  await recordStrings(day, { 1: 9000, 2: 7600 }, 3600000);
+  const rows = await stringsOfDay(day);
+  assert.ok(Math.abs(rows['1'] - 18) < 1e-9, 'row 1: two hours of integration');
+  assert.ok(Math.abs(rows['2'] - 15.2) < 1e-9, 'row 2');
+  // Invalid inputs book nothing.
+  await recordStrings(day, { 1: 9000 }, -1000);
+  await recordStrings(day, null, 60000);
+  assert.equal(Object.keys(await stringsOfDay(day)).length, 2, 'unchanged');
+  // An unobserved day resolves to null.
+  assert.equal(await stringsOfDay('2020-05-05'), null);
+  await rm(dir, { recursive: true, force: true });
 });

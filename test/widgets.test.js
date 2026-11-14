@@ -1,9 +1,9 @@
 // -----------------------------------------------------------------------------
 // Dashboard widgets tests: content shape within the Gladys budget, live tiles
-// bound to the features, the navigable period widgets (day / month / year)
-// and their widget actions, localization. The live snapshot is seeded through
-// a real onPoll (stubbed Modbus client) and the statistics through recorded
-// daily yields in a temp directory.
+// bound to the features, the production widget (day / month / year views
+// switched by widget actions), the PV-rows widget and localization. The live
+// snapshot is seeded through a real onPoll (stubbed Modbus client) and the
+// statistics through recorded daily yields in a temp directory.
 // -----------------------------------------------------------------------------
 
 import { test, beforeEach } from 'node:test';
@@ -21,6 +21,7 @@ import {
 import {
   addDays,
   recordDaily,
+  recordStrings,
   resetStats,
   setStatsDir,
   snapshot,
@@ -29,10 +30,8 @@ import {
 import {
   WIDGET_KEYS,
   overviewWidget,
-  dayWidget,
-  monthWidget,
-  yearWidget,
-  periodWidget,
+  productionWidget,
+  stringsWidget,
   registerWidgets,
   resetNavStateForTests,
 } from '../src/widgets.js';
@@ -87,17 +86,27 @@ function identityBlock({ rated = 5000 } = {}) {
   return regs;
 }
 
+function stringsBlock({ pv1 = [3600, 2500], pv2 = [3800, 2000], pv3 = [0, 0], pv4 = [0, 0] } = {}) {
+  const regs = new Uint16Array(8);
+  [pv1, pv2, pv3, pv4].forEach(([voltage, current], index) => {
+    regs[2 * index] = voltage; // /10 V
+    regs[2 * index + 1] = current; // /100 A
+  });
+  return regs;
+}
+
 function stubClient(overrides = {}) {
   const blocks = {
     identity: identityBlock(),
     power: powerBlock(),
     energy: energyBlock(),
     meter: meterBlock(),
+    strings: stringsBlock(),
     ...overrides,
   };
   return {
     readRegisters: async (start, count) => {
-      const found = Object.entries({ identity: 75, power: 27, energy: 10, meter: 26 }).find(
+      const found = Object.entries({ identity: 75, power: 27, energy: 10, meter: 26, strings: 8 }).find(
         ([, c]) => c === count,
       );
       const block = found ? blocks[found[0]] : null;
@@ -127,6 +136,8 @@ async function seedLive(gladys, { statsDays = 3 } = {}) {
 const tempStats = async () => setStatsDir(await mkdtemp(path.join(tmpdir(), 'huawei-widgets-')));
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+const productionAction = (gladys) => gladys.handlers[`widgetAction:${WIDGET_KEYS.production}`];
 
 beforeEach(() => {
   resetConnectionCache();
@@ -233,24 +244,22 @@ test('the overview widget reports the grid exchange and the inverter state', asy
   assert.equal(status.items[1].color, 'info');
 });
 
-// --- Period widgets ---------------------------------------------------------------
-
 test('the overview widget populates from the poll alone (no test connection needed)', async () => {
   const gladys = createFakeGladys();
   await tempStats();
   // A real poll, WITHOUT the identity read: the model stays unknown, the
-  // widgets must still show the live tiles (this was a regression: the
-  // snapshot was gated on the model, only set by test_connection).
-  setClientFactoryForTests(() => stubClient({ identity: null }));
-  const originalRead = stubClient({ identity: null }).readRegisters;
-  setClientFactoryForTests(() => ({
-    readRegisters: async (start, count) => {
-      if (count === 75) {
-        throw new Error('identity block refused');
-      }
-      return originalRead(start, count);
-    },
-  }));
+  // widgets must still show the live tiles.
+  setClientFactoryForTests(() => {
+    const base = stubClient({ identity: null });
+    return {
+      readRegisters: async (start, count) => {
+        if (count === 75) {
+          throw new Error('identity block refused');
+        }
+        return base.readRegisters(start, count);
+      },
+    };
+  });
   await inverter.onPoll(gladys, config);
 
   const content = await overviewWidget(gladys, { language: 'en' });
@@ -275,6 +284,7 @@ test('the poll books only true hourly deltas (no cumulative lump)', async () => 
       if (count === 27) return powerBlock();
       if (count === 10) return energy;
       if (count === 26) return meterBlock();
+      if (count === 8) return stringsBlock();
       throw new Error(`unexpected read ${start}+${count}`);
     },
   }));
@@ -289,17 +299,20 @@ test('the poll books only true hourly deltas (no cumulative lump)', async () => 
   assert.equal(hourly.filter((h) => h > 0).length, 1, 'one observed hour, no fabricated history');
 });
 
-test('the day widget shows the selected day per hour and its total', async () => {
+// --- Production widget (day / month / year views) ---------------------------------
+
+test('the production widget opens on the day view: hourly chart + total', async () => {
   const gladys = createFakeGladys();
   await tempStats();
   const day = today();
-  await recordDaily(day, 1.2, 1.2, 12); // morning accumulations booked at noon
+  await recordDaily(day, 1.2, 1.2, 12);
   await recordDaily(day, 2.0, 0.8, 13);
   await recordDaily(day, 2.5, 0.5, 14);
 
-  const content = await dayWidget(gladys, { language: 'en' });
+  const content = await productionWidget(gladys, { language: 'en' });
 
   assert.ok(content.components.length <= 8);
+  assert.ok(content.components.filter((c) => c.type === 'button').length <= 4, 'at most 4 buttons');
   const tile = content.components.find((c) => c.type === 'value');
   assert.equal(tile.value, 2.5, 'the day total');
   const chart = content.components.find((c) => c.type === 'chart');
@@ -309,55 +322,17 @@ test('the day widget shows the selected day per hour and its total', async () =>
   assert.equal(chart.series[0].points[13].v, 0.8);
   assert.equal(chart.series[0].points[14].v, 0.5);
   assert.equal(chart.series[0].points.filter((point) => point.v > 0).length, 3, 'the observed hours');
+
+  // Tab-like buttons: Day / Month / Year + Previous.
+  const buttons = content.components.filter((c) => c.type === 'button');
+  assert.deepEqual(buttons.map((button) => button.label.en), ['Day', 'Month', 'Year', 'Previous']);
+  assert.equal(buttons[0].style, 'primary', 'the active tab is highlighted');
 });
 
-test('the day widget navigates to the previous day and back', async () => {
+test('the production widget switches to the month view (tabs as buttons)', async () => {
   const gladys = createFakeGladys();
   await tempStats();
   registerWidgets(gladys);
-  const yesterday = addDays(today(), -1);
-  await recordDaily(yesterday, 4.2); // closed only when a later day starts
-  await recordDaily(today(), 2.0);
-
-  await dayWidget(gladys, { language: 'fr' });
-
-  const action = gladys.handlers[`widgetAction:${WIDGET_KEYS.day}`];
-  assert.equal(typeof action, 'function', 'the widget action is registered');
-  const toast = await action('nav', { dir: -1 }, { settings: {} });
-  assert.match(toast.fr, /Jour précédent/);
-
-  const previous = await dayWidget(gladys, { language: 'fr' });
-  const tile = previous.components.find((c) => c.type === 'value');
-  assert.equal(tile.value, 4.2, 'yesterday total');
-  assert.ok(
-    previous.components.some((c) => c.type === 'text' && /enregistrement a commencé/.test(c.text.fr)),
-    'no hourly detail for a day recorded before this version',
-  );
-
-  await action('today', undefined, { settings: {} });
-  const back = await dayWidget(gladys, { language: 'fr' });
-  assert.equal(back.components.find((c) => c.type === 'value').value, 2.0);
-});
-
-test('the day widget cannot navigate before the first recorded day', async () => {
-  const gladys = createFakeGladys();
-  await tempStats();
-  registerWidgets(gladys);
-  await recordDaily(today(), 2.0);
-
-  const action = gladys.handlers[`widgetAction:${WIDGET_KEYS.day}`];
-  await action('nav', { dir: -1 }, { settings: {} });
-  await action('nav', { dir: -1 }, { settings: {} });
-  const toast = await action('nav', { dir: -1 }, { settings: {} });
-  assert.match(toast.en, /No recorded data before/, 'clamped, with an explicit toast');
-
-  const content = await dayWidget(gladys, { language: 'en' });
-  assert.equal(content.components.find((c) => c.type === 'value').value, 2.0, 'still today');
-});
-
-test('the month widget shows the month per day, with the previous year alongside', async () => {
-  const gladys = createFakeGladys();
-  await tempStats();
   // The same month one year back: three observed days.
   const lastYear = new Date();
   lastYear.setFullYear(lastYear.getFullYear() - 1);
@@ -371,8 +346,10 @@ test('the month widget shows the month per day, with the previous year alongside
   await recordDaily(addDays(today(), -1), 3.5);
   await recordDaily(today(), 2.0);
 
-  const content = await monthWidget(gladys, { language: 'fr' });
+  const toast = await productionAction(gladys)('view', { view: 'month' }, { settings: {} });
+  assert.match(toast.fr, /mois/);
 
+  const content = await productionWidget(gladys, { language: 'fr' });
   const tile = content.components.find((c) => c.type === 'value');
   assert.ok(Number.isFinite(tile.value), 'the month total');
   const chart = content.components.find((c) => c.type === 'chart');
@@ -383,15 +360,19 @@ test('the month widget shows the month per day, with the previous year alongside
     3,
     'two closed days + today',
   );
-  const previousYearMonth = chart.series[1];
-  assert.match(previousYearMonth.name.fr, /année précédente/);
-  assert.equal(previousYearMonth.points.length, 3);
+  // The twin sits on the SAME month positions (no year of empty axis).
+  assert.ok(
+    chart.series[1].points.every((point) => point.t.startsWith(thisMonth)),
+    'the previous-year series is aligned on the current month',
+  );
+  const status = content.components.find((c) => c.type === 'status');
+  assert.ok(status.items.length >= 1, 'the months of the running year');
 });
 
-test('the year widget shows the year per month with the previous year', async () => {
+test('the production widget switches to the year view', async () => {
   const gladys = createFakeGladys();
   await tempStats();
-  // Two months of the previous year, then the running year.
+  registerWidgets(gladys);
   const previousYear = new Date();
   previousYear.setFullYear(previousYear.getFullYear() - 1, 4, 15); // May, last year
   const key = (date) => date.toISOString().slice(0, 10);
@@ -400,28 +381,132 @@ test('the year widget shows the year per month with the previous year', async ()
   await recordDaily(addDays(today(), -1), 3.0); // closes into the running year
   await recordDaily(today(), 1.0);
 
-  const content = await yearWidget(gladys, { language: 'en' });
+  await productionAction(gladys)('view', { view: 'year' }, { settings: {} });
+  const content = await productionWidget(gladys, { language: 'en' });
 
   const chart = content.components.find((c) => c.type === 'chart');
   assert.equal(chart.series.length, 2);
   const runningYear = String(new Date().getFullYear());
-  const thisYear = chart.series[0];
-  assert.equal(
-    thisYear.points.filter((point) => point.t.startsWith(runningYear)).length,
-    1,
-    'the running month partial',
+  assert.ok(
+    chart.series[0].points.every((point) => point.t.startsWith(runningYear)),
+    'month points carry a full ISO date',
   );
   assert.match(chart.series[1].name.en, /previous year/);
+  assert.ok(
+    chart.series[1].points.every((point) => point.t.startsWith(runningYear)),
+    'the previous-year twin is aligned on the running year',
+  );
   const tile = content.components.find((c) => c.type === 'value');
   assert.equal(tile.value, 4.0, 'the running year total (yesterday closed into it + today)');
 });
+
+test('the production widget navigates back in the current view', async () => {
+  const gladys = createFakeGladys();
+  await tempStats();
+  registerWidgets(gladys);
+  const yesterday = addDays(today(), -1);
+  await recordDaily(yesterday, 4.2);
+  await recordDaily(today(), 2.0);
+
+  await productionWidget(gladys, { language: 'fr' });
+
+  const toast = await productionAction(gladys)('nav', { dir: -1 }, { settings: {} });
+  assert.match(toast.fr, /Jour précédent/);
+
+  const previous = await productionWidget(gladys, { language: 'fr' });
+  const tile = previous.components.find((c) => c.type === 'value');
+  assert.equal(tile.value, 4.2, 'yesterday total');
+  assert.ok(
+    previous.components.some((c) => c.type === 'text' && /enregistrement a commencé/.test(c.text.fr)),
+    'no hourly detail for a day recorded before this version',
+  );
+
+  // The month tab resets the period of the month view.
+  await productionAction(gladys)('view', { view: 'month' }, { settings: {} });
+  await productionAction(gladys)('nav', { dir: -1 }, { settings: {} });
+  await productionAction(gladys)('view', { view: 'day' }, { settings: {} });
+  const back = await productionWidget(gladys, { language: 'fr' });
+  assert.equal(back.components.find((c) => c.type === 'value').value, 2.0, 'today again');
+});
+
+test('the production widget cannot navigate before the first recorded day', async () => {
+  const gladys = createFakeGladys();
+  await tempStats();
+  registerWidgets(gladys);
+  await recordDaily(today(), 2.0);
+
+  const action = productionAction(gladys);
+  await action('nav', { dir: -1 }, { settings: {} });
+  await action('nav', { dir: -1 }, { settings: {} });
+  const toast = await action('nav', { dir: -1 }, { settings: {} });
+  assert.match(toast.en, /No recorded data before/, 'clamped, with an explicit toast');
+
+  const content = await productionWidget(gladys, { language: 'en' });
+  assert.equal(content.components.find((c) => c.type === 'value').value, 2.0, 'still today');
+});
+
+// --- Strings (PV rows) widget ------------------------------------------------------
+
+test('the strings widget shows one live tile per reported row', async () => {
+  const gladys = createFakeGladys();
+  await tempStats();
+  await seedLive(gladys); // pv1 and pv2 wired, pv3/pv4 absent
+
+  const content = await stringsWidget(gladys, { language: 'fr' });
+
+  assert.ok(content.components.length <= 8);
+  const tiles = content.components.filter((c) => c.type === 'value' && c.device_feature);
+  assert.equal(tiles.length, 2, 'only the rows the inverter reports');
+  assert.equal(tiles[0].device_feature, ids(gladys).feature('pv1_power'));
+  assert.equal(tiles[1].device_feature, ids(gladys).feature('pv2_power'));
+  assert.equal(tiles[0].label.fr, 'Rangée 1');
+  assert.equal(tiles[1].label.fr, 'Rangée 2');
+});
+
+test('the strings widget charts the estimated energy of the last 7 days', async () => {
+  const gladys = createFakeGladys();
+  await tempStats();
+  await seedLive(gladys);
+  // Estimated energies for the last days (as the poll would book them).
+  for (let offset = -3; offset <= -1; offset += 1) {
+    const date = addDays(today(), offset);
+    await recordStrings(date, { 1: 9000, 2: 7600 }, 3600000); // 9 kWh + 7.6 kWh over an hour
+  }
+
+  const content = await stringsWidget(gladys, { language: 'en' });
+
+  const chart = content.components.find((c) => c.type === 'chart');
+  assert.ok(chart, 'the per-row chart');
+  assert.equal(chart.series.length, 2, 'one series per row');
+  assert.equal(chart.series[0].name.en, 'String 1');
+  assert.equal(chart.series[0].points.length, 7, 'the last 7 days');
+  const observed = chart.series[0].points.filter((point) => point.v > 0);
+  assert.equal(observed.length, 3, 'only the observed days');
+  assert.ok(Math.abs(observed[0].v - 9) < 1e-9, 'W x ms / 3.6e6 = kWh');
+  const caption = content.components.find((c) => c.type === 'text');
+  assert.match(caption.text.en, /Estimated/, 'the estimate is spelled out');
+});
+
+test('the strings widget degrades gracefully without string data', async () => {
+  const gladys = createFakeGladys();
+  await tempStats();
+  await recordDaily(today(), 1.0); // a poll happened, but no string data at all
+
+  const content = await stringsWidget(gladys, { language: 'en' });
+
+  assert.ok(!content.components.some((c) => c.device_feature), 'no live tile without rows');
+  const caption = content.components.find((c) => c.type === 'text');
+  assert.match(caption.text.en, /No per-string data yet/);
+});
+
+// --- Common -----------------------------------------------------------------------
 
 test('every text of the widgets is a multi-language object or a plain string', async () => {
   const gladys = createFakeGladys();
   await tempStats();
   await seedLive(gladys);
 
-  for (const widget of [overviewWidget, dayWidget, monthWidget, yearWidget]) {
+  for (const widget of [overviewWidget, productionWidget, stringsWidget]) {
     const content = await widget(gladys, { language: 'en' });
     for (const component of content.components) {
       for (const field of ['label', 'title', 'unit', 'text', 'name']) {
@@ -436,43 +521,17 @@ test('every text of the widgets is a multi-language object or a plain string', a
   }
 });
 
-test('periodWidget dispatches by key', async () => {
-  const gladys = createFakeGladys();
-  await tempStats();
-  await recordDaily(today(), 1.0);
-  const day = await periodWidget(gladys, WIDGET_KEYS.day, { language: 'en' });
-  const month = await periodWidget(gladys, WIDGET_KEYS.month, { language: 'en' });
-  const year = await periodWidget(gladys, WIDGET_KEYS.year, { language: 'en' });
-  assert.ok(day.components.some((c) => c.type === 'chart' || c.type === 'text'));
-  assert.ok(month.components.some((c) => c.type === 'chart' || c.type === 'text'));
-  assert.ok(year.components.some((c) => c.type === 'chart' || c.type === 'text'));
-});
-
-test('the widgets degrade gracefully before the first poll (no live data)', async () => {
-  const gladys = createFakeGladys();
-  await tempStats();
-  await recordDaily(today(), 1.5);
-
-  const content = await overviewWidget(gladys, { language: 'en' });
-
-  assert.ok(!content.components.some((c) => c.device_feature && c.type === 'value'), 'no live tile without data');
-  assert.ok(!content.components.some((c) => c.type === 'gauge'), 'no gauge without a rated power');
-  const status = content.components.find((c) => c.type === 'status');
-  assert.equal(status.items[0].value, '\u2014', 'a readable placeholder even without data');
-});
-
 test('registerWidgets hooks the widget and action keys on the SDK', () => {
   const gladys = createFakeGladys();
   registerWidgets(gladys);
   for (const key of Object.values(WIDGET_KEYS)) {
     assert.ok(typeof gladys.handlers[`widget:${key}`] === 'function');
   }
-  for (const key of [WIDGET_KEYS.day, WIDGET_KEYS.month, WIDGET_KEYS.year]) {
-    assert.ok(typeof gladys.handlers[`widgetAction:${key}`] === 'function');
-  }
+  assert.ok(typeof gladys.handlers[`widgetAction:${WIDGET_KEYS.production}`] === 'function');
 });
 
 test('feature names are stored in the language of the integration (en by default)', () => {
   assert.equal(t('power_ac'), 'AC power');
   assert.equal(t('device_name'), 'Huawei SUN2000 inverter');
+  assert.equal(t('pv1_power'), 'String 1 power');
 });

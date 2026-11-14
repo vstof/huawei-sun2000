@@ -290,6 +290,7 @@ test('onPoll publishes the production, grid, energy and meter values', async () 
   assert.equal(gladys.fake.lastState(featureIds.feature('total_yield')), 12345.67);
   assert.equal(gladys.fake.lastState(featureIds.feature('pv1_voltage')), 360);
   assert.equal(gladys.fake.lastState(featureIds.feature('pv1_current')), 25);
+  assert.equal(gladys.fake.lastState(featureIds.feature('pv1_power')), 9000, 'derived U x I');
   assert.equal(gladys.fake.lastState(featureIds.feature('grid_volt_ab')), 230);
   assert.equal(gladys.fake.lastState(featureIds.feature('current_a')), 8.695);
   assert.equal(gladys.fake.lastState(featureIds.feature('power_factor')), 0.998);
@@ -320,7 +321,9 @@ test('onPoll skips the features the model does not carry', async () => {
   for (const key of [
     'pv1_voltage',
     'pv1_current',
+    'pv1_power',
     'pv2_voltage',
+    'pv2_power',
     'grid_volt_bc',
     'grid_volt_ca',
     'meter_power',

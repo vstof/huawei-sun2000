@@ -117,7 +117,7 @@ Sans Node (Raspberry Pi par exemple), avec `jq` (`sudo apt install jq`) :
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.7.0 .
+  -t huawei-sun2000-gladys:1.8.0 .
 ```
 
 > Le script `build:image` ajoute l'étiquette `io.gladysassistant.manifest` :
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
-3. Collez le nom d'image : `huawei-sun2000-gladys:1.7.0`
+3. Collez le nom d'image : `huawei-sun2000-gladys:1.8.0`
    (le manifeste est lu automatiquement dans les étiquettes de l'image).
 4. Cliquez sur **Installer**.
 
@@ -156,11 +156,13 @@ tableau de bord **Énergie → Production**. Les fonctionnalités du compteur
 (énergie soutirée / injectée) utilisent la catégorie *capteur de réseau* :
 elles alimentent le suivi **réseau** du même tableau de bord.
 
-## Widgets du tableau de bord et statistiques
+## Widgets du tableau de bord
 
-L'intégration fournit **quatre widgets** à poser sur un tableau de bord
+L'intégration fournit **trois widgets** à poser sur un tableau de bord
 Gladys : *Tableau de bord → Éditer → Ajouter un widget → Huawei SUN2000*.
-Gladys ne permet pas d'onglets *dans* un widget, d'où un widget par vue.
+Gladys ne permet pas d'onglets *dans* un widget ni plus d'un graphique
+principal par widget : c'est pourquoi la production tient dans un seul
+widget dont les boutons changent la vue affichée.
 
 ### « Huawei SUN2000 » — aperçu en temps réel
 
@@ -177,19 +179,57 @@ Gladys ne permet pas d'onglets *dans* un widget, d'où un widget par vue.
   l'interrupteur de l'appareil. ⚠️ Même avertissement que plus haut :
   l'arrêt à distance peut être irréversible sur certains firmwares.
 
-### « Huawei SUN2000 — Journée / Mois / Année » — trois vues navigables
+### « Huawei SUN2000 — Production » — un widget, trois vues
 
-- **Journée** : la production du jour sélectionné **heure par heure**
-  (24 barres), avec son total du jour.
+Trois boutons-onglets changent le graphique affiché :
+
+- **Jour** : la production du jour sélectionné **heure par heure**
+  (24 barres), avec son total du jour ;
 - **Mois** : la production du mois sélectionné **jour par jour**, avec le
-  **même mois de l'année précédente** dessiné à côté pour comparer.
+  **même mois de l'année précédente** dessiné à côté (sur les mêmes
+  positions, pour comparer) et la liste des mois de l'année en cours ;
 - **Année** : la production de l'année sélectionnée **mois par mois**, avec
   **l'année précédente** à côté.
-- Chaque vue a trois boutons : **⟵ période précédente**, **période en cours**
-  (Aujourd'hui / Ce mois / Cette année), **période suivante ⟶**. La
-  navigation s'arrête à la première période enregistrée (message explicite
-  au-delà) ; après un redémarrage du module, la vue revient à la période
-  courante.
+
+Un bouton **Précédent** recule d'une période (jour / mois / année selon la
+vue active) ; recliquer l'onglet actif revient à la période courante. La
+navigation s'arrête à la première période enregistrée (message explicite
+au-delà) ; après un redémarrage du module, la vue revient à la période
+courante.
+
+### « Huawei SUN2000 — Rangées PV » — production par rangée
+
+Si votre installation a **plusieurs rangées de panneaux** (strings), ce
+widget montre :
+
+- une **tuile vivante par rangée** (puissance instantanée mesurée,
+  `String N power` — U × I relevés dans les registres 32016+) ;
+- un **graphique des 7 derniers jours** comparant l'énergie estimée de
+  chaque rangée.
+
+⚠️ **C'est une estimation** : l'onduleur ne compte pas l'énergie par
+rangée. Le module **intègre la puissance mesurée** entre deux relevés
+(× durée écoulée) ; les périodes hors ligne ne sont pas comptées — un
+estimé n'invente pas ce qui n'a pas été observé. La puissance DC totale,
+elle, reste une mesure directe de l'onduleur.
+
+### Pourquoi certaines mesures sont vides (tensions notamment)
+
+Les valeurs nulles ne sont **jamais publiées** : mieux vaut une mesure
+absente qu'un 0 V fabriqué. Cas rencontrés :
+
+- **La nuit ou en veille** : sans irradiation, les strings lisent 0 V —
+  les tensions/courants/puissances des rangées sont vides. Normal ;
+- **Modèle monophasé** : les tensions B-C et C-A n'existent pas
+  physiquement — ces deux mesures resteront toujours vides. Normal ;
+- **Bloc strings refusé par le firmware** : sur certains firmwares (notamment
+  Wi-Fi intégré), le bloc 32016+8 n'est pas servi — toutes les mesures de
+  rangée sont alors vides **même en pleine journée**. Vérifiable dans les
+  logs d'intégration : `Block 32016+8 not available` ;
+- **Pas de Smart Power Sensor** : les mesures de compteur restent vides.
+
+Si les tensions de rangée sont vides **en pleine journée** pendant plusieurs
+jours, c'est le troisième cas : envoyez-moi un extrait des logs.
 
 ### Ce que la navigation peut afficher (et depuis quand)
 
@@ -233,7 +273,7 @@ absentes et le widget reste lisible.
 
 Les noms du device et de ses 30 mesures sont stockés **une seule fois** par
 Gladys : il n'existe pas de mécanisme de traduction par utilisateur pour
-eux. Depuis la 1.7.0 ils sont en **anglais** par défaut (« Huawei SUN2000
+eux. Depuis la 1.8.0 ils sont en **anglais** par défaut (« Huawei SUN2000
 inverter », « AC power », « Daily yield »...). Votre appareil existant garde
 ses libellés actuels : pour obtenir les nouveaux, **supprimez l'appareil**
 (dans Découverte) puis recréez-le — l'intégration le redécouvre avec les
