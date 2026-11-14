@@ -2,7 +2,7 @@
 
 All notable changes to this integration are documented here.
 
-## [1.4.0]
+## [1.5.0]
 
 ### Added
 
@@ -37,7 +37,7 @@ All notable changes to this integration are documented here.
   "AC power", "Daily yield"...). Existing devices keep their stored names:
   delete the device and let the integration rediscover it to get the new
   ones.
-- `huawei-sun2000-gladys:1.4.0` image.
+- `huawei-sun2000-gladys:1.5.0` image.
 
 ## [1.3.0]
 

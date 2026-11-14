@@ -6,8 +6,8 @@
     "en": "Local monitoring of a Huawei SUN2000 solar inverter: production, grid data and power meter.",
     "fr": "Supervision locale d'un onduleur solaire Huawei SUN2000 : production, réseau et compteur."
   },
-  "version": "1.4.0",
-  "docker_image": "huawei-sun2000-gladys:1.4.0",
+  "version": "1.5.0",
+  "docker_image": "huawei-sun2000-gladys:1.5.0",
   "gladys_version": ">=5.1.0",
   "categories": ["energy"],
   "transports": ["local"],
@@ -20,7 +20,10 @@
     },
     {
       "key": "huawei_production",
-      "label": { "en": "Huawei SUN2000 production", "fr": "Production Huawei SUN2000" },
+      "label": {
+        "en": "Huawei SUN2000 production",
+        "fr": "Production Huawei SUN2000"
+      },
       "icon": "bar-chart-2",
       "settings": []
     }
@@ -38,7 +41,10 @@
     {
       "key": "host",
       "type": "string",
-      "label": { "en": "Inverter IP address", "fr": "Adresse IP de l'onduleur" },
+      "label": {
+        "en": "Inverter IP address",
+        "fr": "Adresse IP de l'onduleur"
+      },
       "description": {
         "en": "IP address or hostname of the inverter on your local network (no http:// prefix needed).",
         "fr": "Adresse IP ou nom d'hôte de l'onduleur sur votre réseau local (sans préfixe http://)."
@@ -75,7 +81,10 @@
     {
       "key": "poll_frequency",
       "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Refresh interval (s)",
+        "fr": "Intervalle de rafraîchissement (s)"
+      },
       "description": {
         "en": "How often registers are read, in seconds (one minute minimum). The dongle is a small embedded server: a fast interval brings nothing.",
         "fr": "Fréquence de lecture des registres, en secondes (une minute minimum). Le dongle est un petit serveur embarqué : un intervalle rapide n'apporte rien."

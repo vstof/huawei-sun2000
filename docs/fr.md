@@ -117,7 +117,7 @@ Sans Node (Raspberry Pi par exemple), avec `jq` (`sudo apt install jq`) :
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.4.0 .
+  -t huawei-sun2000-gladys:1.5.0 .
 ```
 
 > Le script `build:image` ajoute l'étiquette `io.gladysassistant.manifest` :
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
-3. Collez le nom d'image : `huawei-sun2000-gladys:1.4.0`
+3. Collez le nom d'image : `huawei-sun2000-gladys:1.5.0`
    (le manifeste est lu automatiquement dans les étiquettes de l'image).
 4. Cliquez sur **Installer**.
 
@@ -209,7 +209,7 @@ absentes et le widget reste lisible.
 
 Les noms du device et de ses 30 mesures sont stockés **une seule fois** par
 Gladys : il n'existe pas de mécanisme de traduction par utilisateur pour
-eux. Depuis la 1.4.0 ils sont en **anglais** par défaut (« Huawei SUN2000
+eux. Depuis la 1.5.0 ils sont en **anglais** par défaut (« Huawei SUN2000
 inverter », « AC power », « Daily yield »...). Votre appareil existant garde
 ses libellés actuels : pour obtenir les nouveaux, **supprimez l'appareil**
 (dans Découverte) puis recréez-le — l'intégration le redécouvre avec les
