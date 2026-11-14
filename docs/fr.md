@@ -69,23 +69,38 @@ déjà en service.
 
 L'intégration est un **conteneur Docker** installé par Gladys lui-même.
 
-### Option 1 — Installer depuis GitHub (recommandé)
+### Option 1 — Installer depuis GitHub (recommandée pour distribuer)
 
-Gladys clone le dépôt et **construit l'image lui-même, sur la machine qui
-l'exécute** : chaque utilisateur obtient la bonne architecture (Raspberry Pi,
-mini-PC...), sans Docker Hub et sans ligne de commande.
+Gladys **lit le manifeste dans le dépôt**, puis télécharge l'image annoncée
+par `docker_image` — construite et publiée automatiquement sur **ghcr.io** (le
+registre de GitHub, pas Docker Hub) par le workflow `release.yml`, en
+multi-architecture (amd64 + arm64 pour les Raspberry Pi).
+
+Prérequis (une fois) : le workflow a tourné sur GitHub, et le package image
+est passé en **public** (GitHub → votre profil → Packages → le package →
+Package settings → **Change visibility → Public** — privé par défaut).
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »**.
 2. Dépliez **Mode développeur** et choisissez l'onglet **GitHub**.
-3. Collez l'URL du dépôt, puis cliquez sur **Installer**. Le build prend
-   quelques minutes sur un Raspberry Pi (l'image est minuscule).
+3. Collez l'URL du dépôt, puis cliquez sur **Installer** : Gladys télécharge
+   l'image depuis ghcr.io.
 4. Passez à l'étape « Configurer » plus bas.
 
-### Option 2 — Construire l'image à la main (mode développeur)
+### Option 2 — Construire l'image sur la machine Gladys (mode développeur, pas de registre)
+
+Avec Node sur la machine :
 
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 npm run build:image     # = docker build, avec le manifeste gravé dans l'image
+```
+
+Sans Node (Raspberry Pi par exemple), avec `jq` (`sudo apt install jq`) :
+
+```bash
+git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
+docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
+  -t huawei-sun2000-gladys:1.1.0 .
 ```
 
 > Le script `build:image` ajoute l'étiquette `io.gladysassistant.manifest` :

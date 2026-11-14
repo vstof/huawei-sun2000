@@ -1,0 +1,52 @@
+# Build the integration image (multi-arch) and push it to ghcr.io — GitHub's
+# own container registry, no Docker Hub.
+#
+# The tag comes from the manifest version, so the published image always
+# matches the `docker_image` the repo advertises. The manifest is also baked
+# into the image as a label, which makes the image usable both through the
+# repo-URL install (manifest fetched from the repo) and the "image Docker"
+# developer install (manifest read from the label).
+name: Release image
+
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the manifest version
+        id: version
+        run: echo "version=$(node -p "require('./gladys-assistant-integration.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Read the manifest (for the image label)
+        id: manifest
+        run: echo "manifest=$(node -e 'process.stdout.write(JSON.stringify(require("./gladys-assistant-integration.json")))')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          labels: |
+            io.gladysassistant.manifest=${{ steps.manifest.outputs.manifest }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/gladys-huawei-sun2000:${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/gladys-huawei-sun2000:latest

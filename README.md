@@ -47,20 +47,25 @@ docs/                             documentation utilisateur (hébergée par Glad
 Deux voies : **depuis GitHub** (recommandée, rien à construire) ou **par nom
 d'image** (mode développeur classique).
 
-### Option 1 — Installer depuis GitHub (recommandé)
+### Option 1 — Installer depuis GitHub (recommandée pour distribuer)
 
-Gladys clone le dépôt et **construit l'image lui-même, sur la machine qui
-l'exécute** (Raspberry Pi, mini-PC...) : chaque utilisateur obtient la bonne
-architecture, sans Docker Hub et sans ligne de commande.
+Gladys **lit le manifeste dans le dépôt**, puis télécharge l'image annoncée
+par `docker_image` — construite et publiée automatiquement sur **ghcr.io** (le
+registre de GitHub, pas Docker Hub) par le workflow `release.yml`, en
+multi-architecture (amd64 + arm64 pour les Raspberry Pi).
+
+Prérequis (une fois) : le workflow a tourné sur GitHub, et le package image
+est passé en **public** (GitHub → votre profil → Packages → le package →
+Package settings → **Change visibility → Public** — par défaut il est privé).
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »**.
 2. Dépliez **Mode développeur** et choisissez l'onglet **GitHub**.
-3. Collez l'URL du dépôt, puis cliquez sur **Installer**. Le build prend
-   quelques minutes sur un Raspberry Pi (l'image est minuscule).
+3. Collez l'URL du dépôt, puis cliquez sur **Installer** : Gladys télécharge
+   l'image depuis ghcr.io.
 4. Configurez : voir la section « Configurer » de
    [`docs/fr.md`](docs/fr.md).
 
-### Option 2 — Installer par nom d'image (mode développeur)
+### Option 2 — Construire l'image sur la machine Gladys (mode développeur, pas de registre)
 
 À la main, sur la machine qui fait tourner Gladys :
 
@@ -97,9 +102,28 @@ intégration). Vérifier enfin que le validateur du store passe :
 npx --allow-git=all github:GladysAssistant/integration-store --skip-image-check .
 ```
 
+### Publier l'image sur ghcr.io (nécessaire pour l'installation par URL GitHub)
+
+L'installation par URL GitHub ne lit que le **manifeste** dans le dépôt :
+l'image annoncée par `docker_image` doit être **pullable anonymement**. Le
+workflow `release.yml` construit l'image (amd64 + arm64) et la publie
+automatiquement sur ghcr.io à chaque push :
+
+1. Après le premier push, vérifier l'onglet **Actions** : le workflow
+   « Release image » doit être vert.
+2. Rendre l'image **publique** : GitHub → profil → **Packages** → le package
+   → **Package settings** → **Change visibility → Public** (privé par défaut,
+   et une image privée est refusée au pull anonyme).
+3. Mettre à jour `docker_image` dans `gladys-assistant-integration.json` :
+   ```json
+   "docker_image": "ghcr.io/<votre-compte>/gladys-huawei-sun2000:1.1.0"
+   ```
+   puis commit + push (les tests vérifient la cohérence version/manifeste, le
+   workflow republie l'image au même tag).
+
 À chaque nouvelle version : bump de `package.json` + `docker_image` dans le
-manifeste (les tests le vérifient), commit, push. Les installations GitHub
-reconstruisent l'image à la version du manifeste.
+manifeste, commit, push — le workflow republie l'image, et les utilisateurs
+installant par URL GitHub la récupèrent.
 
 ## Registres utilisés
 

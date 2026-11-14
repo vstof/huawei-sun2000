@@ -68,23 +68,38 @@ on the other hand, has no effect on an inverter that is already running.
 
 The integration is a **Docker container** installed by Gladys itself.
 
-### Option 1 — Install from GitHub (recommended)
+### Option 1 — Installer depuis GitHub (recommandée pour distribuer)
 
-Gladys clones the repository and **builds the image itself, on the machine
-that runs it**: every user gets the right architecture (Raspberry Pi,
-mini-PC...), with no Docker Hub and no command line.
+Gladys **reads the manifest from the repository**, then downloads the image
+announced by `docker_image` — built and published automatically on **ghcr.io**
+(GitHub's own registry, not Docker Hub) by the `release.yml` workflow, in
+multi-architecture (amd64 + arm64 for Raspberry Pis).
+
+One-time prerequisite: the workflow has run on GitHub, and the image package
+is **public** (GitHub → your profile → Packages → the package → Package
+settings → **Change visibility → Public** — private by default).
 
 1. Go to **Integrations** → the **"Install an integration"** button.
 2. Unfold **Developer mode** and pick the **GitHub** tab.
-3. Paste the repository URL, then click **Install**. The build takes a few
-   minutes on a Raspberry Pi (the image is tiny).
+3. Paste the repository URL, then click **Install**: Gladys downloads the
+   image from ghcr.io.
 4. Jump to the "Configure" step below.
 
-### Option 2 — Build the image by hand (developer mode)
+### Option 2 — Build the image on the Gladys machine (developer mode, no registry)
+
+With Node on the machine:
 
 ```bash
 git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
 npm run build:image     # = docker build, with the manifest baked into the image
+```
+
+Without Node (a Raspberry Pi for instance), with `jq` (`sudo apt install jq`):
+
+```bash
+git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
+docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
+  -t huawei-sun2000-gladys:1.1.0 .
 ```
 
 > The `build:image` script adds the `io.gladysassistant.manifest` label: this
