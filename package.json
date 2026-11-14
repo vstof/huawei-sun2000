@@ -1,0 +1,20 @@
+{
+  "name": "gladys-integration-huawei-sun2000",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gladys Assistant external integration for Huawei SUN2000 solar inverters (local Modbus TCP).",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test",
+    "build:image": "node scripts/build.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@gladysassistant/integration-sdk": "^0.16.0"
+  },
+  "license": "Apache-2.0"
+}

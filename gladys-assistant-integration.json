@@ -1,0 +1,86 @@
+{
+  "manifest_version": 1,
+  "type": "device",
+  "name": "Huawei SUN2000",
+  "description": {
+    "en": "Local monitoring of a Huawei SUN2000 solar inverter: production, grid data and power meter.",
+    "fr": "Supervision locale d'un onduleur solaire Huawei SUN2000 : production, réseau et compteur."
+  },
+  "version": "1.0.0",
+  "docker_image": "huawei-sun2000-gladys:1.0.0",
+  "gladys_version": ">=5.1.0",
+  "categories": ["energy"],
+  "transports": ["local"],
+  "config_schema": [
+    {
+      "key": "intro",
+      "type": "section",
+      "label": { "en": "Inverter connection", "fr": "Connexion à l'onduleur" },
+      "description": {
+        "en": "The integration reads the inverter over your local network with Modbus TCP. In the FusionSolar app (installer or owner account): Communication configuration, Dongle / Inverter, enable the TCP/IP protocol on port 502 with slave id 0, and connect the dongle to your Wi-Fi.",
+        "fr": "L'intégration lit l'onduleur sur votre réseau local en Modbus TCP. Dans l'application FusionSolar : Configuration de communication, Dongle / Onduleur, activer le protocole TCP/IP sur le port 502 avec l'adresse esclave 0, et raccorder le dongle à votre Wi-Fi."
+      }
+    },
+    {
+      "key": "host",
+      "type": "string",
+      "label": { "en": "Inverter IP address", "fr": "Adresse IP de l'onduleur" },
+      "description": {
+        "en": "IP address or hostname of the inverter on your local network (no http:// prefix needed).",
+        "fr": "Adresse IP ou nom d'hôte de l'onduleur sur votre réseau local (sans préfixe http://)."
+      },
+      "placeholder": { "en": "e.g. 192.168.1.60", "fr": "ex. 192.168.1.60" },
+      "required": true
+    },
+    {
+      "key": "port",
+      "type": "number",
+      "label": { "en": "Modbus TCP port", "fr": "Port Modbus TCP" },
+      "description": {
+        "en": "502 is the standard port of the dongle; keep it unless your installer changed it.",
+        "fr": "502 est le port standard du dongle ; gardez-le sauf modification par votre installateur."
+      },
+      "required": false,
+      "default": 502,
+      "min": 1,
+      "max": 65535
+    },
+    {
+      "key": "unit_id",
+      "type": "number",
+      "label": { "en": "Modbus slave id", "fr": "Adresse esclave Modbus" },
+      "description": {
+        "en": "0 is the value of the Huawei interface definitions (the dongle answers there). Some dongle firmwares answer on 1 instead.",
+        "fr": "0 est la valeur des définitions d'interface Huawei (le dongle y répond). Certains firmwares de dongle répondent sur 1."
+      },
+      "required": false,
+      "default": 0,
+      "min": 0,
+      "max": 247
+    },
+    {
+      "key": "poll_frequency",
+      "type": "number",
+      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "description": {
+        "en": "How often registers are read, in seconds (one minute minimum). The dongle is a small embedded server: a fast interval brings nothing.",
+        "fr": "Fréquence de lecture des registres, en secondes (une minute minimum). Le dongle est un petit serveur embarqué : un intervalle rapide n'apporte rien."
+      },
+      "required": false,
+      "default": 60,
+      "min": 60,
+      "max": 3600
+    }
+  ],
+  "actions": [
+    {
+      "key": "test_connection",
+      "label": { "en": "Test the connection", "fr": "Tester la connexion" },
+      "description": {
+        "en": "Reads the inverter and reports its model, serial number, rated power and status.",
+        "fr": "Interroge l'onduleur et affiche son modèle, son numéro de série, sa puissance nominale et son état."
+      },
+      "timeout_seconds": 30
+    }
+  ]
+}
