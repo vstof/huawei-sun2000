@@ -135,6 +135,7 @@ function fakeSocket() {
       (this.listeners[event] ??= []).push(handler);
     },
     setTimeout() {}, // armed by the client, never fires on a fake socket
+    setNoDelay() {}, // called by the client after the handshake
     write(frame) {
       this.written.push(frame);
     },
@@ -148,13 +149,12 @@ function fakeSocket() {
 }
 
 // A socket that answers every request: reads (FC 03) with `registers`, writes
-// (FC 06) with the echo the client validates. `corruptTransactionId` shifts
-// the echoed id by one, simulating an out-of-sync stream.
-function responderSocket({ registers = [0], corruptTransactionId = false } = {}) {
+// (FC 06) with the echo the client validates.
+function responderSocket({ registers = [0] } = {}) {
   const sock = fakeSocket();
   sock.write = (frame) => {
     sock.written.push(frame);
-    const transactionId = frame.readUInt16BE(0) + (corruptTransactionId ? 1 : 0);
+    const transactionId = frame.readUInt16BE(0);
     const functionCode = frame.readUInt8(7);
     let pdu;
     if (functionCode === 0x03) {
@@ -193,6 +193,7 @@ test('readRegisters reuses one connection across reads', async () => {
   const sockets = [];
   const client = createModbusClient(config, {
     connect: connectStub(sockets, () => responderSocket({ registers: [32064] })),
+    connectDelayMs: 0,
   });
 
   const first = await client.readRegisters(30000, 1);
@@ -233,7 +234,7 @@ test('a failed exchange is retried once on a fresh connection', async () => {
     process.nextTick(() => socket.emit('connect'));
     return socket;
   };
-  const client = createModbusClient(config, { connect });
+  const client = createModbusClient(config, { connect, connectDelayMs: 0 });
 
   const values = await client.readRegisters(30000, 1);
 
@@ -242,28 +243,83 @@ test('a failed exchange is retried once on a fresh connection', async () => {
   assert.ok(sockets[0].destroyed, 'the dead socket was dropped');
 });
 
-test('an out-of-sync response drops the connection and retries clean', async () => {
+test('a late or unexpected frame is discarded, the connection is kept', async () => {
   const sockets = [];
-  const connect = () => {
-    const socket =
-      sockets.length === 0 ? responderSocket({ corruptTransactionId: true }) : responderSocket({ registers: [7] });
-    sockets.push(socket);
-    process.nextTick(() => socket.emit('connect'));
-    return socket;
+  // The device first replays a stale answer (wrong transaction id — the reply
+  // to a request we already gave up on), then answers the actual request.
+  const staleThenAnswer = () => {
+    const sock = fakeSocket();
+    sock.write = (frame) => {
+      sock.written.push(frame);
+      const stale = responseFrame({ transactionId: 9999, unitId: frame.readUInt8(6), registers: [0] });
+      sock.emit('data', stale);
+      sock.emit('data', responseFrame({ transactionId: frame.readUInt16BE(0), unitId: frame.readUInt8(6), registers: [7] }));
+    };
+    return sock;
   };
-  const client = createModbusClient(config, { connect });
+  const client = createModbusClient(config, {
+    connect: connectStub(sockets, staleThenAnswer),
+    connectDelayMs: 0,
+  });
 
   const values = await client.readRegisters(30000, 1);
 
   assert.deepEqual([...values], [7]);
-  assert.equal(sockets.length, 2, 'reopened after the mismatch');
-  assert.ok(sockets[0].destroyed, 'the out-of-sync socket was dropped');
+  assert.equal(sockets.length, 1, 'the stale frame did not cost the connection');
+  assert.ok(!sockets[0].destroyed, 'the connection is still alive');
+});
+
+test('a clean close during an exchange rejects it and retries on a fresh connection', async () => {
+  const sockets = [];
+  const connect = () => {
+    // First connection: closes cleanly right after the first write, without
+    // answering. The retry succeeds on a brand-new one.
+    const socket =
+      sockets.length === 0
+        ? (() => {
+            const closing = fakeSocket();
+            closing.write = (frame) => {
+              closing.written.push(frame);
+              closing.emit('close');
+            };
+            return closing;
+          })()
+        : responderSocket({ registers: [9] });
+    sockets.push(socket);
+    process.nextTick(() => socket.emit('connect'));
+    return socket;
+  };
+  const client = createModbusClient(config, { connect, connectDelayMs: 0 });
+
+  const values = await client.readRegisters(30000, 1);
+
+  assert.deepEqual([...values], [9]);
+  assert.equal(sockets.length, 2, 'exactly one retry after the close');
+  assert.ok(sockets[0].destroyed, 'the closed socket was dropped');
+});
+
+test('the first request waits after the TCP handshake', async () => {
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  const sockets = [];
+  const client = createModbusClient(config, {
+    connect: connectStub(sockets, () => responderSocket({ registers: [5] })),
+    connectDelayMs: 30,
+  });
+
+  const promise = client.readRegisters(30000, 1);
+  await tick(); // connect event fired
+  await tick();
+  assert.equal(sockets[0].written.length, 0, 'nothing is sent right after the handshake');
+
+  const values = await promise;
+  assert.deepEqual([...values], [5]);
+  assert.equal(sockets[0].written.length, 1, 'the request goes out after the delay');
 });
 
 test('a timeout is retried once, then surfaces as a readable error', async () => {
   const tick = () => new Promise((resolve) => setImmediate(resolve));
   const sockets = [];
-  const client = createModbusClient(config, { connect: connectStub(sockets, () => fakeSocket()) });
+  const client = createModbusClient(config, { connect: connectStub(sockets, () => fakeSocket()), connectDelayMs: 0 });
 
   const promise = client.readRegisters(30000, 1);
   await tick(); // first connection established, frame written
@@ -279,7 +335,10 @@ test('a timeout is retried once, then surfaces as a readable error', async () =>
 
 test('writeRegister validates the echo over the persistent connection', async () => {
   const sockets = [];
-  const client = createModbusClient(config, { connect: connectStub(sockets) });
+  const client = createModbusClient(config, {
+    connect: connectStub(sockets),
+    connectDelayMs: 0,
+  });
 
   await client.writeRegister(40200, 0);
 
@@ -294,6 +353,7 @@ test('an idle connection is closed after 30 s, reopened on demand', async (t) =>
   const sockets = [];
   const client = createModbusClient(config, {
     connect: connectStub(sockets, () => responderSocket({ registers: [1] })),
+    connectDelayMs: 0,
   });
 
   await client.readRegisters(30000, 1);

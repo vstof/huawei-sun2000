@@ -117,7 +117,7 @@ Sans Node (Raspberry Pi par exemple), avec `jq` (`sudo apt install jq`) :
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.2.0 .
+  -t huawei-sun2000-gladys:1.3.0 .
 ```
 
 > Le script `build:image` ajoute l'étiquette `io.gladysassistant.manifest` :
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
-3. Collez le nom d'image : `huawei-sun2000-gladys:1.2.0`
+3. Collez le nom d'image : `huawei-sun2000-gladys:1.3.0`
    (le manifeste est lu automatiquement dans les étiquettes de l'image).
 4. Cliquez sur **Installer**.
 
@@ -178,6 +178,9 @@ elles alimentent le suivi **réseau** du même tableau de bord.
   d'inactivité, rétablie automatiquement). Certains firmwares — notamment le
   Wi-Fi intégré des onduleurs anciens (port 6607) — n'acceptent qu'une seule
   connexion et ignorent les clients qui se reconnectent à chaque trame.
+  Après chaque connexion, le client **attend 1 seconde** avant la première
+  trame : les modules Huawei avalent souvent la requête envoyée juste après
+  le handshake TCP.
 - Les énergies Huawei sont des compteurs en kWh (gain 100) : la production du
   jour repart à zéro à minuit heure locale de l'onduleur.
 - La puissance réseau du compteur suit la convention Gladys

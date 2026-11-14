@@ -19,8 +19,10 @@
 //
 // Blocks are read independently: a block the inverter refuses (old firmware,
 // missing power meter, single-phase model) simply does not publish its states.
-// The two "core" blocks — identity and power — must both answer: failing both
-// flags the inverter unreachable.
+// The power block (32064+) is the "core" read that qualifies the
+// reachability; the identity block is only read on demand (action "Test the
+// connection") — polling it every cycle would cost 75 registers a minute for
+// nothing, which matters on the slow built-in Wi-Fi module (port 6607).
 //
 // All units are converted to what Gladys expects: W, V, A, kWh, °C, Hz... the
 // Huawei "gain" (value in 0.001 kW for powers, /10 for voltages...) is applied
@@ -483,11 +485,11 @@ export const inverter = {
     const ids = gladys.externalIds(DEVICE_TYPE, PLATFORM_DEVICE_ID);
     const client = getClient(config);
 
-    // Core blocks: both must answer, otherwise the inverter is unreachable.
-    let identity;
+    // Core block: if it fails, the inverter is unreachable. The identity
+    // block is deliberately NOT polled: it never changes, and 75 registers
+    // a minute is needless traffic on the slow built-in Wi-Fi module.
     let power;
     try {
-      identity = await client.readRegisters(BLOCKS.identity.start, BLOCKS.identity.count);
       power = await client.readRegisters(BLOCKS.power.start, BLOCKS.power.count);
     } catch (error) {
       await reportConnection(gladys, false, error);
@@ -507,7 +509,7 @@ export const inverter = {
       }
     }
 
-    const states = buildStates(ids, { identity, power, ...optional });
+    const states = buildStates(ids, { power, ...optional });
     logger.debug(`Poll: ${states.length} value(s) read`);
     if (states.length > 0) {
       await gladys.publishStates(states);

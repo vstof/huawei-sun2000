@@ -114,7 +114,7 @@ Without Node (a Raspberry Pi for instance), with `jq` (`sudo apt install jq`):
 ```bash
 git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.2.0 .
+  -t huawei-sun2000-gladys:1.3.0 .
 ```
 
 > The `build:image` script adds the `io.gladysassistant.manifest` label: this
@@ -125,7 +125,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Go to **Integrations** → the **"Install an integration"** button (GitHub).
 2. Unfold the **Developer mode** link.
-3. Paste the image name: `huawei-sun2000-gladys:1.2.0`
+3. Paste the image name: `huawei-sun2000-gladys:1.3.0`
    (the manifest is read automatically from the image labels).
 4. Click **Install**.
 
@@ -183,7 +183,9 @@ dashboard. The power meter features (imported / exported energy) use the
   the first read, kept between polls (closed after 30 s of inactivity,
   re-established automatically). Some firmwares — notably the built-in Wi-Fi
   of older inverters (port 6607) — accept a single connection and ignore
-  clients that reconnect for every frame.
+  clients that reconnect for every frame. After each connection, the client
+  **waits 1 second** before the first frame: Huawei modules often swallow the
+  request sent right after the TCP handshake.
 - Huawei energies are kWh counters (gain 100): the daily yield resets at the
   inverter's local midnight.
 - The grid power of the meter follows the Gladys convention (*import > 0,

@@ -20,6 +20,18 @@
 // idempotent, so a retry after a dead connection cannot double-fire a command
 // in a harmful way.
 //
+// Huawei-specific quirks this client accounts for (confirmed against working
+// integrations — wlcrs/huawei_solar for Home Assistant, gboulvin's Gladys
+// integration — and the built-in Wi-Fi hardware itself):
+//   - the FIRST request sent right after the TCP handshake is often dropped:
+//     the client waits CONNECT_DELAY_MS after connecting before talking;
+//   - a late or unexpected answer (the reply to a request that already timed
+//     out) is simply discarded: dropping the connection for it would cause
+//     reconnect churn on the slow Wi-Fi module;
+//   - the device closes idle connections: the client reconnects lazily on the
+//     next request, and a clean close during an exchange rejects that exchange
+//     immediately instead of leaving it to the timeout.
+//
 // The socket is injectable so the tests never touch the network.
 // -----------------------------------------------------------------------------
 
@@ -39,6 +51,11 @@ export const DEFAULT_TIMEOUT_MS = 10000;
 // one. Long enough to span several 60 s polls in a row, short enough not to
 // hold the inverter's single connection slot when Gladys idles.
 export const IDLE_CLOSE_MS = 30000;
+// The first frame right after the TCP handshake is often swallowed by the
+// Huawei modules (the built-in Wi-Fi of the inverter in particular): wait
+// this long after connecting before sending the first request. Matches the
+// 1 s delay the working community integrations apply.
+export const CONNECT_DELAY_MS = 1000;
 
 export class ModbusError extends Error {
   constructor(message, { code, host } = {}) {
@@ -171,9 +188,10 @@ export function parseWriteResponse(frame, transactionId, address, value) {
 /**
  * Create a Modbus TCP client bound to one inverter.
  * @param {object} config normalized config (host, port, unit_id)
- * @param {object} [options] `connect` overrides the socket factory (tests)
+ * @param {object} [options] `connect` overrides the socket factory and
+ *   `connectDelayMs` the post-handshake wait (both for tests)
  */
-export function createModbusClient(config, { connect = net.connect } = {}) {
+export function createModbusClient(config, { connect = net.connect, connectDelayMs = CONNECT_DELAY_MS } = {}) {
   const host = String(config.host ?? '').trim();
   if (!host) {
     throw new ModbusError('The inverter address is empty: fill in the IP address in the configuration.');
@@ -229,12 +247,43 @@ export function createModbusClient(config, { connect = net.connect } = {}) {
   function open() {
     return new Promise((resolve, reject) => {
       let settled = false;
+      let connectTimer = null;
       const s = connect({ host, port });
-      s.on('connect', () => {
+      const failBeforeConnected = (message) => {
         if (settled) return;
         settled = true;
-        socket = s;
-        resolve();
+        if (connectTimer !== null) {
+          clearTimeout(connectTimer);
+        }
+        s.destroy();
+        reject(new ModbusError(message, { host }));
+      };
+      // A connection attempt must not hang forever either (dropped SYN on a
+      // sleepy Wi-Fi module): same budget as an exchange.
+      connectTimer = setTimeout(
+        () => failBeforeConnected(`connection to ${host}:${port} timed out after ${timeoutMs} ms`),
+        timeoutMs,
+      );
+      s.on('connect', () => {
+        if (settled) return;
+        s.setNoDelay?.(true); // no Nagle: Modbus frames are tiny and urgent
+        // The first request right after the handshake is often dropped by the
+        // Huawei modules (built-in Wi-Fi, port 6607): wait before talking.
+        const startTalking = () => {
+          if (settled) return;
+          settled = true;
+          if (connectTimer !== null) {
+            clearTimeout(connectTimer);
+            connectTimer = null;
+          }
+          socket = s;
+          resolve();
+        };
+        if (connectDelayMs > 0) {
+          setTimeout(startTalking, connectDelayMs);
+        } else {
+          startTalking();
+        }
       });
       s.on('data', onData);
       s.on('timeout', () => {
@@ -245,8 +294,7 @@ export function createModbusClient(config, { connect = net.connect } = {}) {
       });
       s.on('error', (error) => {
         if (!settled) {
-          settled = true;
-          reject(new ModbusError(`connection failed: ${error.message}`, { host }));
+          failBeforeConnected(`connection failed: ${error.message}`);
           return;
         }
         dropSocket();
@@ -255,8 +303,12 @@ export function createModbusClient(config, { connect = net.connect } = {}) {
       s.on('close', () => {
         if (socket === s) {
           socket = null;
+          s.destroy(); // force the final close, like the working integrations
         }
         disarmIdleTimer();
+        // A clean close while an exchange is in flight must not hang until the
+        // timeout: reject it now (the caller retries on a fresh connection).
+        rejectPending(new ModbusError('connection closed by the device', { host }));
       });
     });
   }
@@ -281,11 +333,12 @@ export function createModbusClient(config, { connect = net.connect } = {}) {
         }
         armIdleTimer();
       } else {
-        // A late or unexpected frame: the stream is out of sync (the answer to
-        // a request we already timed out, garbage...). The only honest
-        // recovery is to drop the connection and reopen a clean one.
-        dropSocket();
-        rejectPending(new ModbusError('response transaction id mismatch'));
+        // A late or unexpected frame: most likely the answer to a request we
+        // already gave up on. Discarding it (and keeping the connection) is
+        // what the working community integrations do — dropping the
+        // connection for a stale frame would cause reconnect churn on the
+        // slow built-in Wi-Fi module. The current exchange, if any, keeps
+        // waiting for ITS answer and still has its timeout as a safety net.
       }
     }
   }

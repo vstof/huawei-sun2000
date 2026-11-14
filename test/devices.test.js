@@ -248,8 +248,8 @@ test('the poller reads the device at the refresh interval of the config', async 
   let reads = 0;
   setClientFactoryForTests(() => ({
     readRegisters: async (start, count) => {
-      // Count the identity reads only: one poll reads five blocks.
-      if (start === 30000) {
+      // Count the core power-block reads: one poll reads one per cycle.
+      if (start === 32064) {
         reads += 1;
       }
       return stubClient().readRegisters(start, count);
