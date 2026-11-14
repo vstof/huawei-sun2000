@@ -117,7 +117,7 @@ Without Node (a Raspberry Pi for instance), with `jq` (`sudo apt install jq`):
 ```bash
 git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.5.0 .
+  -t huawei-sun2000-gladys:1.6.0 .
 ```
 
 > The `build:image` script adds the `io.gladysassistant.manifest` label: this
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Go to **Integrations** → the **"Install an integration"** button (GitHub).
 2. Unfold the **Developer mode** link.
-3. Paste the image name: `huawei-sun2000-gladys:1.5.0`
+3. Paste the image name: `huawei-sun2000-gladys:1.6.0`
    (the manifest is read automatically from the image labels).
 4. Click **Install**.
 
@@ -238,7 +238,7 @@ off), the live tiles and the gauge are absent and the widget stays readable.
 ### Device and feature names
 
 The device name and its 30 feature names are stored **once** by Gladys:
-there is no per-user translation mechanism for them. Since 1.5.0 they
+there is no per-user translation mechanism for them. Since 1.6.0 they
 default to **English** ("Huawei SUN2000 inverter", "AC power", "Daily
 yield"...). An existing device keeps its stored names: to get the new ones,
 **delete the device** (in Discovery) and create it again — the integration

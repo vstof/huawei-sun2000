@@ -6,8 +6,8 @@
     "en": "Local monitoring of a Huawei SUN2000 solar inverter: production, grid data and power meter.",
     "fr": "Supervision locale d'un onduleur solaire Huawei SUN2000 : production, réseau et compteur."
   },
-  "version": "1.5.0",
-  "docker_image": "huawei-sun2000-gladys:1.5.0",
+  "version": "1.6.0",
+  "docker_image": "huawei-sun2000-gladys:1.6.0",
   "gladys_version": ">=5.1.0",
   "categories": ["energy"],
   "transports": ["local"],
@@ -52,8 +52,8 @@
       "type": "section",
       "label": { "en": "Inverter connection", "fr": "Connexion à l'onduleur" },
       "description": {
-        "en": "The integration reads the inverter over your local network with Modbus TCP. In the FusionSolar app (installer or owner account): Communication configuration, Dongle / Inverter, enable the TCP/IP protocol on port 502 with slave id 0, and connect the dongle to your Wi-Fi.",
-        "fr": "L'intégration lit l'onduleur sur votre réseau local en Modbus TCP. Dans l'application FusionSolar : Configuration de communication, Dongle / Onduleur, activer le protocole TCP/IP sur le port 502 avec l'adresse esclave 0, et raccorder le dongle à votre Wi-Fi."
+        "en": "The integration reads the inverter over your local network with Modbus TCP. In the FusionSolar app (installer or owner account): Communication configuration, Dongle / Inverter, enable the TCP/IP protocol on port 502 with slave id 0, and connect the dongle to your Wi-Fi. Without a Smart Dongle (built-in Wi-Fi), the Modbus TCP port is 6607 instead.",
+        "fr": "L'intégration lit l'onduleur sur votre réseau local en Modbus TCP. Dans l'application FusionSolar : Configuration de communication, Dongle / Onduleur, activer le protocole TCP/IP sur le port 502 avec l'adresse esclave 0, et raccorder le dongle à votre Wi-Fi. Sans Smart Dongle (Wi-Fi intégré), le port Modbus TCP est 6607."
       }
     },
     {
@@ -75,8 +75,8 @@
       "type": "number",
       "label": { "en": "Modbus TCP port", "fr": "Port Modbus TCP" },
       "description": {
-        "en": "502 is the standard port of the dongle; keep it unless your installer changed it.",
-        "fr": "502 est le port standard du dongle ; gardez-le sauf modification par votre installateur."
+        "en": "502 is the standard port of the Smart Dongle; keep it unless your installer changed it. Without a Smart Dongle (the inverter's built-in Wi-Fi), the inverter serves Modbus on port 6607.",
+        "fr": "502 est le port standard du Smart Dongle ; gardez-le sauf modification par votre installateur. Sans Smart Dongle (Wi-Fi intégré de l'onduleur), l'onduleur sert le Modbus sur le port 6607."
       },
       "required": false,
       "default": 502,

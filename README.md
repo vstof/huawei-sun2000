@@ -92,7 +92,7 @@ npm run build:image     # docker build + étiquette io.gladysassistant.manifest
 > donnerait `MANIFEST_NOT_FOUND`.
 
 Puis dans Gladys : **Intégrations → Installer une intégration → Mode développeur →
-image Docker** `huawei-sun2000-gladys:1.5.0`. Détails dans [`docs/fr.md`](docs/fr.md).
+image Docker** `huawei-sun2000-gladys:1.6.0`. Détails dans [`docs/fr.md`](docs/fr.md).
 
 ## Publier le dépôt GitHub (mainteneur)
 
@@ -101,7 +101,7 @@ manifeste doit être à la racine du dépôt par défaut) :
 
 ```bash
 cd huawei-sun2000
-git init && git add -A && git commit -m "Huawei SUN2000 integration 1.5.0"
+git init && git add -A && git commit -m "Huawei SUN2000 integration 1.6.0"
 git remote add origin git@github.com:<votre-compte>/gladys-huawei-sun2000.git
 git push -u origin main        # ou master, selon la branche créée
 ```
@@ -128,7 +128,7 @@ automatiquement sur ghcr.io à chaque push :
    et une image privée est refusée au pull anonyme).
 3. Mettre à jour `docker_image` dans `gladys-assistant-integration.json` :
    ```json
-   "docker_image": "ghcr.io/<votre-compte>/gladys-huawei-sun2000:1.5.0"
+   "docker_image": "ghcr.io/<votre-compte>/gladys-huawei-sun2000:1.6.0"
    ```
    puis commit + push (les tests vérifient la cohérence version/manifeste, le
    workflow republie l'image au même tag).
