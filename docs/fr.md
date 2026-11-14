@@ -117,7 +117,7 @@ Sans Node (Raspberry Pi par exemple), avec `jq` (`sudo apt install jq`) :
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.6.0 .
+  -t huawei-sun2000-gladys:1.7.0 .
 ```
 
 > Le script `build:image` ajoute l'étiquette `io.gladysassistant.manifest` :
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
-3. Collez le nom d'image : `huawei-sun2000-gladys:1.6.0`
+3. Collez le nom d'image : `huawei-sun2000-gladys:1.7.0`
    (le manifeste est lu automatiquement dans les étiquettes de l'image).
 4. Cliquez sur **Installer**.
 
@@ -200,8 +200,8 @@ stocke rien de consultable en Modbus :
   journalier à chaque relevé (toutes les minutes) : il commence à
   l'installation de cette version et est conservé **40 jours** ;
 - l'énergie produite **avant le premier relevé d'un jour** (matin, ou
-  redémarrage en cours de journée) est rattachée à l'heure de ce premier
-  relevé : c'est une approximation, la seule attribution disponible ;
+  redémarrage en cours de journée) n'est pas répartie par heure : ces heures
+  restent vides — le total du jour, lui, est complet ;
 - les **totaux par jour** sont conservés **~13 mois** (navigation du mois
   jusqu'à l'année précédente), les cumuls mensuels **25 mois** ;
 - les jours où rien n'a été lu (module arrêté, onduleur injoignable)
@@ -233,7 +233,7 @@ absentes et le widget reste lisible.
 
 Les noms du device et de ses 30 mesures sont stockés **une seule fois** par
 Gladys : il n'existe pas de mécanisme de traduction par utilisateur pour
-eux. Depuis la 1.6.0 ils sont en **anglais** par défaut (« Huawei SUN2000
+eux. Depuis la 1.7.0 ils sont en **anglais** par défaut (« Huawei SUN2000
 inverter », « AC power », « Daily yield »...). Votre appareil existant garde
 ses libellés actuels : pour obtenir les nouveaux, **supprimez l'appareil**
 (dans Découverte) puis recréez-le — l'intégration le redécouvre avec les

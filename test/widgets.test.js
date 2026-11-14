@@ -24,6 +24,7 @@ import {
   resetStats,
   setStatsDir,
   snapshot,
+  hourlyFor,
 } from '../src/stats.js';
 import {
   WIDGET_KEYS,
@@ -233,6 +234,60 @@ test('the overview widget reports the grid exchange and the inverter state', asy
 });
 
 // --- Period widgets ---------------------------------------------------------------
+
+test('the overview widget populates from the poll alone (no test connection needed)', async () => {
+  const gladys = createFakeGladys();
+  await tempStats();
+  // A real poll, WITHOUT the identity read: the model stays unknown, the
+  // widgets must still show the live tiles (this was a regression: the
+  // snapshot was gated on the model, only set by test_connection).
+  setClientFactoryForTests(() => stubClient({ identity: null }));
+  const originalRead = stubClient({ identity: null }).readRegisters;
+  setClientFactoryForTests(() => ({
+    readRegisters: async (start, count) => {
+      if (count === 75) {
+        throw new Error('identity block refused');
+      }
+      return originalRead(start, count);
+    },
+  }));
+  await inverter.onPoll(gladys, config);
+
+  const content = await overviewWidget(gladys, { language: 'en' });
+
+  const live = content.components.find((c) => c.type === 'value' && c.device_feature);
+  assert.equal(live.device_feature, ids(gladys).feature('power_ac'), 'the live tile follows the poll');
+  const gauge = content.components.find((c) => c.type === 'gauge');
+  assert.ok(gauge, 'a gauge even without the rated power');
+  assert.equal(gauge.max, 10000, 'the fallback rated power');
+  assert.equal(gauge.value, 1950);
+  const tiles = content.components.filter((c) => c.type === 'value' && !c.device_feature);
+  assert.ok(tiles.some((c) => c.unit === '°C'), 'the temperature tile');
+});
+
+test('the poll books only true hourly deltas (no cumulative lump)', async () => {
+  const gladys = createFakeGladys();
+  await tempStats();
+  // A mutable energy block, shared across polls.
+  const energy = energyBlock({ daily: 420 }); // 4.2 kWh already produced
+  setClientFactoryForTests(() => ({
+    readRegisters: async (start, count) => {
+      if (count === 27) return powerBlock();
+      if (count === 10) return energy;
+      if (count === 26) return meterBlock();
+      throw new Error(`unexpected read ${start}+${count}`);
+    },
+  }));
+
+  await inverter.onPoll(gladys, config); // first poll: the morning total cannot be split per hour
+  assert.equal(await hourlyFor(today()), null, 'nothing booked on the first poll of the day');
+
+  energy[9] = 450; // 4.5 kWh: 0.3 kWh produced since the previous poll
+  await inverter.onPoll(gladys, config);
+  const hourly = await hourlyFor(today());
+  assert.ok(Math.abs(hourly[new Date().getHours()] - 0.3) < 1e-9, 'the delta of the last minute(s)');
+  assert.equal(hourly.filter((h) => h > 0).length, 1, 'one observed hour, no fabricated history');
+});
 
 test('the day widget shows the selected day per hour and its total', async () => {
   const gladys = createFakeGladys();

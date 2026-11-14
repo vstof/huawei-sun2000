@@ -2,7 +2,7 @@
 
 All notable changes to this integration are documented here.
 
-## [1.6.0]
+## [1.7.0]
 
 ### Added
 
@@ -26,9 +26,9 @@ All notable changes to this integration are documented here.
 
 - The statistics file is versioned (`version: 2`): a version-1 file is
   migrated on load, its daily and monthly history is kept.
-- `huawei-sun2000-gladys:1.6.0` image.
+- `huawei-sun2000-gladys:1.7.0` image.
 
-### Added (1.4.0 content, unpublished release)
+### Added (content of the unpublished 1.4.0 / 1.5.0 local releases)
 
 - **Two dashboard widgets** (declared in the manifest, rendered by the Gladys
   core — no custom HTML/CSS, every text is a native `{ en, fr }` object):
@@ -61,7 +61,6 @@ All notable changes to this integration are documented here.
   "AC power", "Daily yield"...). Existing devices keep their stored names:
   delete the device and let the integration rediscover it to get the new
   ones.
-- `huawei-sun2000-gladys:1.6.0` image.
 
 ## [1.3.0]
 

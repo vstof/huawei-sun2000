@@ -434,11 +434,15 @@ export async function monthWidget(gladys, { language = 'en' } = {}) {
   }
 
   if (days.length > 0) {
+    // The previous-year twin is drawn ON THE SAME AXIS POSITIONS (same day
+    // numbers): two clusters one year apart would leave a year of empty
+    // axis between them.
+    const sameAxis = (entry) => ({ t: `${month}-${entry.date.slice(8)}`, v: round(entry.kwh) });
     const series = [dailySeries(days)];
     if (previousYearDays.length > 0) {
       series.push({
         name: { en: `${monthLabelLong(previousYearMonth, 'en')} (previous year)`, fr: `${monthLabelLong(previousYearMonth, 'fr')} (année précédente)` },
-        points: previousYearDays.map((entry) => ({ t: entry.date, v: round(entry.kwh) })),
+        points: previousYearDays.map(sameAxis),
       });
     }
     components.push({
@@ -456,6 +460,20 @@ export async function monthWidget(gladys, { language = 'en' } = {}) {
         en: `No production recorded for ${monthLabelLong(month, 'en')} yet.`,
         fr: `Aucune production enregistrée pour ${monthLabelLong(month, 'fr')} pour l'instant.`,
       },
+    });
+  }
+
+  // The months of the running year as a compact list: the comparison the
+  // user reads at a glance without navigating.
+  const yearMonths = await monthsOfYear(month.slice(0, 4));
+  if (yearMonths.length > 0) {
+    components.push({
+      type: 'status',
+      items: yearMonths.map((entry) => ({
+        label: { en: monthLabelLong(entry.month, 'en'), fr: monthLabelLong(entry.month, 'fr') },
+        value: round(entry.kwh),
+        color: W.SUCCESS,
+      })),
     });
   }
 
@@ -498,16 +516,19 @@ export async function yearWidget(gladys, { language = 'en' } = {}) {
   }
 
   if (months.length > 0) {
+    // Month points carry a full ISO date; the previous-year twin sits on the
+    // SAME month positions (a year-apart cluster would leave a year of
+    // empty axis between the two series).
     const series = [
       {
         name: { en: 'Monthly production', fr: 'Production mensuelle' },
-        points: months.map((entry) => ({ t: entry.month, v: round(entry.kwh) })),
+        points: months.map((entry) => ({ t: `${entry.month}-01`, v: round(entry.kwh) })),
       },
     ];
     if (previousYearMonths.length > 0) {
       series.push({
         name: { en: `${previousYear} (previous year)`, fr: `${previousYear} (année précédente)` },
-        points: previousYearMonths.map((entry) => ({ t: entry.month, v: round(entry.kwh) })),
+        points: previousYearMonths.map((entry) => ({ t: `${year}-${entry.month.slice(5)}-01`, v: round(entry.kwh) })),
       });
     }
     components.push({

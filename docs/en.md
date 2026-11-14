@@ -117,7 +117,7 @@ Without Node (a Raspberry Pi for instance), with `jq` (`sudo apt install jq`):
 ```bash
 git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.6.0 .
+  -t huawei-sun2000-gladys:1.7.0 .
 ```
 
 > The `build:image` script adds the `io.gladysassistant.manifest` label: this
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Go to **Integrations** → the **"Install an integration"** button (GitHub).
 2. Unfold the **Developer mode** link.
-3. Paste the image name: `huawei-sun2000-gladys:1.6.0`
+3. Paste the image name: `huawei-sun2000-gladys:1.7.0`
    (the manifest is read automatically from the image labels).
 4. Click **Install**.
 
@@ -208,8 +208,8 @@ nothing readable over Modbus:
   poll (every minute): it starts when this version is installed and is kept
   for **40 days**;
 - the energy produced **before the first poll of a day** (mornings, or a
-  mid-day restart) is booked into that first poll's hour: an approximation,
-  the only attribution available;
+  mid-day restart) is not split per hour: those hours stay empty — the day
+  total, however, is complete;
 - the **per-day totals** are kept for **~13 months** (the month view
   navigates back to the previous year), the monthly buckets **25 months**;
 - days when nothing was read (module stopped, inverter unreachable) do not
@@ -238,7 +238,7 @@ off), the live tiles and the gauge are absent and the widget stays readable.
 ### Device and feature names
 
 The device name and its 30 feature names are stored **once** by Gladys:
-there is no per-user translation mechanism for them. Since 1.6.0 they
+there is no per-user translation mechanism for them. Since 1.7.0 they
 default to **English** ("Huawei SUN2000 inverter", "AC power", "Daily
 yield"...). An existing device keeps its stored names: to get the new ones,
 **delete the device** (in Discovery) and create it again — the integration

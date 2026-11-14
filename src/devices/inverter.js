@@ -253,7 +253,10 @@ export function resetLiveSnapshotForTests() {
  * first successful read). A copy, so callers cannot mutate the cache.
  */
 export function getLiveSnapshot() {
-  if (liveSnapshot.model === null) {
+  // The power block is read at every poll: it is what makes the snapshot
+  // exist. (The model is only known from the identity block, read by the
+  // "Test the connection" action — it must not gate the widgets.)
+  if (liveSnapshot.acPower === null) {
     return null;
   }
   return { ...liveSnapshot };
@@ -611,16 +614,17 @@ export const inverter = {
       const today = localDate();
       const daily = u32(optional.energy, 8) / 100;
       let hourlyDelta = null;
-      if (lastReading.date === today && lastReading.kwh !== null) {
-        // Same day: the delta since the previous poll (a lower reading is a
-        // glitch: no delta).
-        hourlyDelta = daily >= lastReading.kwh ? daily - lastReading.kwh : null;
-      } else {
-        // First poll of the day: the register already holds the morning's
-        // production; the whole of it is booked into the current hour (the
-        // only attribution available — see src/stats.js).
-        hourlyDelta = daily;
+      if (lastReading.date === today && lastReading.kwh !== null && daily >= lastReading.kwh) {
+        // Same day, register monotonic: the delta since the previous poll is
+        // the production of the last minute(s) — the only hourly figure we
+        // truly observed.
+        hourlyDelta = daily - lastReading.kwh;
       }
+      // Anything else (first poll of a day, register reset, glitch) books
+      // NOTHING into the hourly profile: the energy produced before the
+      // first poll of a day cannot be split per hour, and attributing the
+      // whole of it to one hour drew a fake cumulative-looking spike. The
+      // daily total (day/month/year) keeps the full value.
       lastReading.date = today;
       lastReading.kwh = daily;
       try {
