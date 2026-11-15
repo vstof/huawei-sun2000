@@ -74,6 +74,8 @@ function emptyStore() {
     // Estimated energy per PV string (row) per day: { 'YYYY-MM-DD': { 1: kWh } }
     // — an integration of the measured U x I power, not an inverter counter.
     strings: {},
+    // Hourly profile per row and day: { 'YYYY-MM-DD': { 1: [24 kWh] } }
+    strings_hours: {},
   };
 }
 
@@ -128,6 +130,21 @@ async function ensureLoaded() {
         delete store.strings[date];
       }
     }
+    if (store.strings_hours === null || typeof store.strings_hours !== 'object' || Array.isArray(store.strings_hours)) {
+      store.strings_hours = {};
+    }
+    for (const [date, rowProfiles] of Object.entries(store.strings_hours)) {
+      if (
+        rowProfiles === null ||
+        typeof rowProfiles !== 'object' ||
+        Object.values(rowProfiles).some(
+          (profile) =>
+            !Array.isArray(profile) || profile.length !== 24 || profile.some((h) => !Number.isFinite(h) || h < 0),
+        )
+      ) {
+        delete store.strings_hours[date];
+      }
+    }
   } catch {
     // Missing (first run) or unreadable (hand-edited): start clean.
     store = emptyStore();
@@ -180,6 +197,11 @@ function pruneHours() {
       delete store.strings[key];
     }
   }
+  for (const key of Object.keys(store.strings_hours)) {
+    if (key < cutoffDate) {
+      delete store.strings_hours[key];
+    }
+  }
 }
 
 /**
@@ -190,23 +212,38 @@ function pruneHours() {
  * @param {string} date local date YYYY-MM-DD
  * @param {Record<number, number>} powers per-string power in W
  * @param {number} elapsedMs time covered by this reading (ms)
+ * @param {number|null} [hour] local hour (0-23) of the reading, also booked
+ *   into the per-row hourly profile of the day
  */
-export async function recordStrings(date, powers, elapsedMs) {
+export async function recordStrings(date, powers, elapsedMs, hour = null) {
   if (!powers || typeof powers !== 'object' || !Number.isFinite(elapsedMs) || elapsedMs <= 0) {
     return;
   }
   await ensureLoaded();
+  const validHour = Number.isInteger(hour) && hour >= 0 && hour <= 23;
   let booked = false;
   for (const [row, rawPower] of Object.entries(powers)) {
     const power = Number(rawPower);
     if (!Number.isFinite(power) || power < 0 || !/^\d+$/.test(row)) {
       continue;
     }
+    // W * ms -> kWh: P(W) * t(h) / 1000 = P * ms / 3 600 000 000
+    const kwh = (power * elapsedMs) / 3600000000;
     if (store.strings[date] === undefined || store.strings[date] === null) {
       store.strings[date] = {};
     }
-    // W * ms -> kWh: P(W) * t(h) / 1000 = P * ms / 3 600 000 000
-    store.strings[date][row] = (store.strings[date][row] ?? 0) + (power * elapsedMs) / 3600000000;
+    store.strings[date][row] = (store.strings[date][row] ?? 0) + kwh;
+    if (validHour) {
+      if (store.strings_hours[date] === undefined || store.strings_hours[date] === null) {
+        store.strings_hours[date] = {};
+      }
+      let profile = store.strings_hours[date][row];
+      if (!Array.isArray(profile) || profile.length !== 24) {
+        profile = new Array(24).fill(0);
+        store.strings_hours[date][row] = profile;
+      }
+      profile[hour] += kwh;
+    }
     booked = true;
   }
   if (!booked) {
@@ -234,6 +271,24 @@ export async function stringsOfDay(dateKey) {
   const result = {};
   for (const [row, kwh] of Object.entries(rowMap)) {
     result[row] = kwh;
+  }
+  return result;
+}
+
+/**
+ * The hourly profile per row of ONE day: { 1: [24 kWh], ... } or null when
+ * not recorded.
+ * @param {string} dateKey YYYY-MM-DD
+ */
+export async function stringsHourly(dateKey) {
+  const data = await ensureLoaded();
+  const rowProfiles = data.strings_hours[dateKey];
+  if (!rowProfiles || Object.keys(rowProfiles).length === 0) {
+    return null;
+  }
+  const result = {};
+  for (const [row, profile] of Object.entries(rowProfiles)) {
+    result[row] = [...profile];
   }
   return result;
 }

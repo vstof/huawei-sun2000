@@ -117,7 +117,7 @@ Sans Node (Raspberry Pi par exemple), avec `jq` (`sudo apt install jq`) :
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.8.0 .
+  -t huawei-sun2000-gladys:1.9.0 .
 ```
 
 > Le script `build:image` ajoute l'étiquette `io.gladysassistant.manifest` :
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
-3. Collez le nom d'image : `huawei-sun2000-gladys:1.8.0`
+3. Collez le nom d'image : `huawei-sun2000-gladys:1.9.0`
    (le manifeste est lu automatiquement dans les étiquettes de l'image).
 4. Cliquez sur **Installer**.
 
@@ -170,18 +170,24 @@ widget dont les boutons changent la vue affichée.
   produite (AC) » — elle s'anime à chaque rafraîchissement du poll.
 - **Jauge** : puissance instantanée rapportée à la puissance nominale de
   l'onduleur (lue lors du « Test de la connexion »).
-- **Entrée DC** et **température interne**.
+- **Aujourd'hui** (production du jour) et **Production totale** (index de
+  vie de l'onduleur) : tuiles vivantes, animées avec les relevés.
+- **Rendement** et **Tension réseau** (présents seulement quand les
+  registres les portent — le rendement tombe à 0 la nuit) ;
 - **Graphique en barres des 7 derniers jours**.
 - **Statut** : état de l'onduleur (Connecté, Veille, Arrêté...) et échange
   réseau (Soutirage X kW / Injection X kW / Équilibré) si un Smart Power
   Sensor est installé.
-- **Boutons Démarrer / Arrêter** : la même commande marche/arrêt que
-  l'interrupteur de l'appareil. ⚠️ Même avertissement que plus haut :
-  l'arrêt à distance peut être irréversible sur certains firmwares.
+
+> Pas de bouton démarrer/arrêté ici : un bouton ne peut pas afficher
+> l'état actuel de l'onduleur, ce qui rendait le contrôle déroutant. L'état
+> est visible dans la ligne de statut, et la commande marche/arrêt reste
+> sur la page de l'appareil (et dans les scénarios) où son état est affiché.
 
 ### « Huawei SUN2000 — Production » — un widget, trois vues
 
-Trois boutons-onglets changent le graphique affiché :
+Trois boutons-onglets changent le graphique affiché (l'onglet actif est
+surligné, en couleur) :
 
 - **Jour** : la production du jour sélectionné **heure par heure**
   (24 barres), avec son total du jour ;
@@ -191,6 +197,8 @@ Trois boutons-onglets changent le graphique affiché :
 - **Année** : la production de l'année sélectionnée **mois par mois**, avec
   **l'année précédente** à côté.
 
+Le titre du graphique indique la période affichée (jour, mois ou année),
+comme le sélecteur de date du widget natif « Consommation d'énergie ».
 Un bouton **Précédent** recule d'une période (jour / mois / année selon la
 vue active) ; recliquer l'onglet actif revient à la période courante. La
 navigation s'arrête à la première période enregistrée (message explicite
@@ -204,8 +212,10 @@ widget montre :
 
 - une **tuile vivante par rangée** (puissance instantanée mesurée,
   `String N power` — U × I relevés dans les registres 32016+) ;
-- un **graphique des 7 derniers jours** comparant l'énergie estimée de
-  chaque rangée.
+- deux vues commutées par boutons-onglets : **Heure par heure** (le détail
+  horaire du jour sélectionné, une série par rangée, 24 barres — défaut) et
+  **7 jours** (l'énergie estimée de chaque rangée, avec **Précédent** pour
+  remonter d'un jour / d'une semaine).
 
 ⚠️ **C'est une estimation** : l'onduleur ne compte pas l'énergie par
 rangée. Le module **intègre la puissance mesurée** entre deux relevés
@@ -273,7 +283,7 @@ absentes et le widget reste lisible.
 
 Les noms du device et de ses 30 mesures sont stockés **une seule fois** par
 Gladys : il n'existe pas de mécanisme de traduction par utilisateur pour
-eux. Depuis la 1.8.0 ils sont en **anglais** par défaut (« Huawei SUN2000
+eux. Depuis la 1.9.0 ils sont en **anglais** par défaut (« Huawei SUN2000
 inverter », « AC power », « Daily yield »...). Votre appareil existant garde
 ses libellés actuels : pour obtenir les nouveaux, **supprimez l'appareil**
 (dans Découverte) puis recréez-le — l'intégration le redécouvre avec les

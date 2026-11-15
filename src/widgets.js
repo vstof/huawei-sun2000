@@ -37,6 +37,7 @@ import {
   daysOfMonth,
   monthsOfYear,
   stringsOfDay,
+  stringsHourly,
   dataBounds,
   addDays,
   addMonths,
@@ -149,6 +150,8 @@ const offsetOf = (view) => periodOffset.get(offsetKey(view)) ?? 0;
 export function resetNavStateForTests() {
   periodOffset.clear();
   productionView = 'day';
+  stringsView = 'hourly';
+  stringsDayOffset = 0;
 }
 
 /** Whole months between two YYYY-MM keys (b - a). */
@@ -213,24 +216,42 @@ export async function overviewWidget(gladys, { language = 'en' } = {}) {
       label: { en: 'vs rated power', fr: 'vs puissance nominale' },
       color: W.PRIMARY,
     });
-    if (live.dcPower !== null && Number.isFinite(live.dcPower)) {
+    // Energy counters as live tiles: published at every poll, they animate
+    // through the real-time path without waiting for the widget TTL.
+    components.push({
+      type: 'value',
+      device_feature: featureExternalId(gladys, 'daily_yield'),
+      label: { en: 'Today', fr: 'Aujourd\u2019hui' },
+      icon: 'sunrise',
+      color: W.SUCCESS,
+    });
+    components.push({
+      type: 'value',
+      device_feature: featureExternalId(gladys, 'total_yield'),
+      label: { en: 'Total yield', fr: 'Production totale' },
+      icon: 'trending-up',
+      color: W.SUCCESS,
+    });
+    // Efficiency and grid voltage only exist while the registers carry them
+    // (efficiency reads 0 at night): a tile with no data is not sent.
+    if (live.efficiency !== null && Number.isFinite(live.efficiency)) {
       components.push({
         type: 'value',
-        value: Math.round(live.dcPower),
-        unit: 'W',
-        label: { en: 'DC input', fr: 'Entrée DC' },
-        icon: 'zap',
+        value: Math.round(live.efficiency * 10) / 10,
+        unit: '%',
+        label: { en: 'Efficiency', fr: 'Rendement' },
+        icon: 'percent',
         color: W.INFO,
       });
     }
-    if (live.temperature !== null && Number.isFinite(live.temperature)) {
+    if (live.gridVoltage !== null && Number.isFinite(live.gridVoltage)) {
       components.push({
         type: 'value',
-        value: Math.round(live.temperature * 10) / 10,
-        unit: '°C',
-        label: { en: 'Internal temp.', fr: 'Température int.' },
-        icon: 'thermometer',
-        color: W.DANGER,
+        value: Math.round(live.gridVoltage * 10) / 10,
+        unit: 'V',
+        label: { en: 'Grid voltage', fr: 'Tension réseau' },
+        icon: 'activity',
+        color: W.PRIMARY,
       });
     }
   }
@@ -274,28 +295,10 @@ export async function overviewWidget(gladys, { language = 'en' } = {}) {
   }
   components.push({ type: 'status', items: statusItems });
 
-  // Start / stop: the standard device-command path (the values come back
-  // through onSetValue, like the running switch of the device). See the
-  // docs warning before using the stop command on a real inverter.
-  const running = featureExternalId(gladys, 'running');
-  components.push(
-    {
-      type: 'button',
-      label: { en: 'Start', fr: 'Démarrer' },
-      icon: 'play',
-      device_feature: running,
-      value: 1,
-    },
-    {
-      type: 'button',
-      label: { en: 'Stop', fr: 'Arrêter' },
-      icon: 'square',
-      style: 'danger',
-      device_feature: running,
-      value: 0,
-    },
-  );
-
+  // No on/off buttons here: they were confusing (a pill that cannot show
+  // the inverter state). The state lives in the status line above, and the
+  // on/off control stays on the device page (and in scenes) where its
+  // current state is visible.
   return { ttl_seconds: 60, components };
 }
 
@@ -309,23 +312,27 @@ const VIEW_TABS = {
 };
 
 function viewButtons(currentView) {
+  // Each button carries its OWN action key: the core drops buttons sharing
+  // an action key within one content ("duplicate action key") — that is what
+  // made the tab row disappear.
   return VIEWS.map((view) => ({
     type: 'button',
     label: VIEW_TABS[view],
     icon: view === 'day' ? 'sunrise' : view === 'month' ? 'calendar' : 'bar-chart-2',
     style: view === currentView ? 'primary' : 'secondary',
-    action: { key: 'view', params: { view } },
+    action: { key: `view_${view}` },
   }));
 }
 
 /**
- * Handle the production widget actions: `view` (switch tab, resets the
- * period) and `nav` (previous period of the current view). Shifts the
+ * Handle the production widget actions: `view_<name>` (switch tab, resets
+ * the period) and `nav` (previous period of the current view). Shifts the
  * in-memory state, nudges the core to re-render, answers with a toast.
  */
 async function handleProductionAction(actionKey, params) {
-  if (actionKey === 'view' && VIEWS.includes(params?.view)) {
-    productionView = params.view;
+  const requestedView = actionKey.startsWith('view_') ? actionKey.slice('view_'.length) : null;
+  if (requestedView !== null && VIEWS.includes(requestedView)) {
+    productionView = requestedView;
     periodOffset.set(offsetKey(productionView), 0);
     return finishAction('view');
   }
@@ -417,8 +424,8 @@ export async function productionWidget(gladys, { language = 'en' } = {}) {
         type: 'text',
         variant: 'caption',
         text: {
-          en: `No hourly detail recorded for ${dayLabel(date, 'en')} (recording started with this version).`,
-          fr: `Pas de détail horaire enregistré pour le ${dayLabel(date, 'fr')} (l'enregistrement a commencé avec cette version).`,
+          en: `No hourly detail for ${dayLabel(date, 'en')}.`,
+          fr: `Pas de détail horaire pour le ${dayLabel(date, 'fr')}.`,
         },
       });
     }
@@ -468,8 +475,8 @@ export async function productionWidget(gladys, { language = 'en' } = {}) {
         type: 'text',
         variant: 'caption',
         text: {
-          en: `No production recorded for ${monthLabelLong(month, 'en')} yet.`,
-          fr: `Aucune production enregistrée pour ${monthLabelLong(month, 'fr')} pour l'instant.`,
+          en: `No production recorded for ${monthLabelLong(month, 'en')}.`,
+          fr: `Aucune production pour ${monthLabelLong(month, 'fr')}.`,
         },
       });
     }
@@ -533,8 +540,8 @@ export async function productionWidget(gladys, { language = 'en' } = {}) {
         type: 'text',
         variant: 'caption',
         text: {
-          en: `No production recorded for ${year} yet.`,
-          fr: `Aucune production enregistrée pour ${year} pour l'instant.`,
+          en: `No production recorded for ${year}.`,
+          fr: `Aucune production pour ${year}.`,
         },
       });
     }
@@ -557,9 +564,62 @@ export async function productionWidget(gladys, { language = 'en' } = {}) {
 
 // --- The strings (PV rows) widget ------------------------------------------------
 
+const STRING_VIEWS = ['hourly', 'week'];
+let stringsView = 'hourly';
+let stringsDayOffset = 0;
+
+const STRING_TABS = {
+  hourly: { en: 'Hour by hour', fr: 'Heure par heure' },
+  week: { en: '7 days', fr: '7 jours' },
+};
+
+/**
+ * Handle the strings widget actions: `view_hourly` / `view_week` (switch
+ * view, back to today) and `nav` (one step back). Each button carries its
+ * own action key — the core drops buttons sharing an action key.
+ */
+async function handleStringsAction(actionKey) {
+  const requestedView = actionKey.startsWith('view_') ? actionKey.slice('view_'.length) : null;
+  if (requestedView !== null && STRING_VIEWS.includes(requestedView)) {
+    stringsView = requestedView;
+    stringsDayOffset = 0;
+    return finishStringsAction('view');
+  }
+  const step = stringsView === 'week' ? 7 : 1;
+  const bounds = await dataBounds();
+  const today = localDate();
+  const min = bounds.firstDay ? -dayDiff(bounds.firstDay, today) : 0;
+  const requested = stringsDayOffset - step;
+  const clamped = Math.max(min, requested);
+  stringsDayOffset = clamped;
+  return finishStringsAction(clamped !== requested ? 'blocked' : 'nav');
+}
+
+function finishStringsAction(kind) {
+  try {
+    stringsRefresh?.();
+  } catch {
+    // fire-and-forget
+  }
+  if (kind === 'view') {
+    return {
+      en: `Showing the ${STRING_TABS[stringsView].en.toLowerCase()} view`,
+      fr: `Vue ${STRING_TABS[stringsView].fr.toLowerCase()} affichée`,
+    };
+  }
+  if (kind === 'blocked') {
+    return { en: 'No recorded data before this period', fr: 'Pas de données enregistrées avant cette période' };
+  }
+  return { en: 'Showing the previous period', fr: 'Période précédente affichée' };
+}
+
+// Set by registerWidgets: the refresh closure of the strings widget key.
+let stringsRefresh = null;
+
 /**
  * The PV rows widget: live per-string power tiles (U x I as measured by the
- * inverter) and the estimated energy per row over the last 7 days.
+ * inverter), then either the hourly detail of a day or the last 7 days of
+ * estimated energy per row — switched by tab-like buttons.
  */
 export async function stringsWidget(gladys, { language = 'en' } = {}) {
   const live = getLiveSnapshot();
@@ -578,47 +638,101 @@ export async function stringsWidget(gladys, { language = 'en' } = {}) {
     });
   }
 
-  // Estimated energy per row, last 7 days (two series, one per row).
-  const dates = [];
-  const today = localDate();
-  for (let offset = -6; offset <= 0; offset += 1) {
-    dates.push(addDays(today, offset));
-  }
-  const perDay = await Promise.all(dates.map((date) => stringsOfDay(date)));
-  const observed = perDay.filter((entry) => entry !== null);
-  if (observed.length > 0 && rows.length > 0) {
-    const series = rows.slice(0, 4).map((row) => ({
+  const date = addDays(localDate(), stringsDayOffset);
+  const seriesOf = (valuesFor) =>
+    rows.slice(0, 4).map((row) => ({
       name: { en: `String ${row}`, fr: `Rangée ${row}` },
-      points: dates.map((date, index) => ({
-        t: date,
-        v: round(perDay[index]?.[String(row)] ?? 0),
-      })),
+      points: valuesFor(row),
     }));
-    components.push({
-      type: 'chart',
-      chart_type: 'bar',
-      title: { en: 'Estimated energy per string (7 days)', fr: 'Énergie estimée par rangée (7 jours)' },
-      unit: 'kWh',
-      series,
-    });
-    components.push({
-      type: 'text',
-      variant: 'caption',
-      text: {
-        en: 'Estimated from the measured string power (U x I) at each poll; offline periods are not counted.',
-        fr: 'Estimé à partir de la puissance mesurée (U x I) à chaque relevé ; les périodes hors ligne ne sont pas comptées.',
-      },
-    });
+  const noRowsText = {
+    type: 'text',
+    variant: 'caption',
+    text: {
+      en: 'No per-string data yet (night or no string registers).',
+      fr: 'Pas de données par rangée (nuit ou registres absents).',
+    },
+  };
+  const caption = {
+    type: 'text',
+    variant: 'caption',
+    text: {
+      en: 'Estimated from measured power (U x I); offline gaps not counted.',
+      fr: 'Estimé (U x I) à chaque relevé ; hors ligne non compté.',
+    },
+  };
+
+  if (rows.length === 0) {
+    components.push(noRowsText);
+  } else if (stringsView === 'hourly') {
+    // The hourly detail of the day: one series per row, 24 bars.
+    const hourly = await stringsHourly(date);
+    if (hourly) {
+      components.push({
+        type: 'chart',
+        chart_type: 'bar',
+        title: { en: dayLabel(date, 'en'), fr: dayLabel(date, 'fr') },
+        unit: 'kWh',
+        series: seriesOf((row) =>
+          (hourly[String(row)] ?? new Array(24).fill(0)).map((kwh, hour) => ({
+            t: `${date}T${String(hour).padStart(2, '0')}:00:00`,
+            v: round(kwh),
+          })),
+        ),
+      });
+      components.push(caption);
+    } else {
+      components.push({
+        type: 'text',
+        variant: 'caption',
+        text: {
+          en: 'No hourly row data for this day.',
+          fr: 'Pas de détail horaire par rangée.',
+        },
+      });
+    }
   } else {
-    components.push({
-      type: 'text',
-      variant: 'caption',
-      text: {
-        en: 'No per-string data yet (the string registers read 0 at night or are not served by the firmware).',
-        fr: 'Pas encore de données par rangée (les registres strings lisent 0 la nuit ou ne sont pas servis par le firmware).',
-      },
-    });
+    // The last 7 days ending on the selected date.
+    const dates = [];
+    for (let back = 6; back >= 0; back -= 1) {
+      dates.push(addDays(date, -back));
+    }
+    const perDay = await Promise.all(dates.map((day) => stringsOfDay(day)));
+    const observed = perDay.filter((entry) => entry !== null);
+    if (observed.length > 0) {
+      components.push({
+        type: 'chart',
+        chart_type: 'bar',
+        title: {
+          en: `7 days to ${dayLabel(date, 'en')}`,
+          fr: `7 jours jusqu'au ${dayLabel(date, 'fr')}`,
+        },
+        unit: 'kWh',
+        series: seriesOf((row) =>
+          dates.map((day, index) => ({ t: day, v: round(perDay[index]?.[String(row)] ?? 0) })),
+        ),
+      });
+      components.push(caption);
+    } else {
+      components.push(noRowsText);
+    }
   }
+
+  // Tab-like buttons (unique action keys) + one step back.
+  components.push(
+    ...STRING_VIEWS.map((view) => ({
+      type: 'button',
+      label: STRING_TABS[view],
+      icon: view === 'hourly' ? 'clock' : 'bar-chart-2',
+      style: view === stringsView ? 'primary' : 'secondary',
+      action: { key: `view_${view}` },
+    })),
+    {
+      type: 'button',
+      label: { en: 'Previous', fr: 'Précédent' },
+      icon: 'chevron-left',
+      action: { key: 'nav' },
+    },
+  );
 
   return { ttl_seconds: 60, components };
 }
@@ -632,7 +746,9 @@ export function registerWidgets(gladys) {
   gladys.onWidgetGet(WIDGET_KEYS.production, (options) => productionWidget(gladys, options ?? {}));
   gladys.onWidgetGet(WIDGET_KEYS.strings, (options) => stringsWidget(gladys, options ?? {}));
   globalRefresh = () => gladys.requestWidgetRefresh(WIDGET_KEYS.production);
+  stringsRefresh = () => gladys.requestWidgetRefresh(WIDGET_KEYS.strings);
   gladys.onWidgetAction(WIDGET_KEYS.production, (actionKey, params) =>
     handleProductionAction(actionKey, params),
   );
+  gladys.onWidgetAction(WIDGET_KEYS.strings, (actionKey) => handleStringsAction(actionKey));
 }

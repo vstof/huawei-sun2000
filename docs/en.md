@@ -117,7 +117,7 @@ Without Node (a Raspberry Pi for instance), with `jq` (`sudo apt install jq`):
 ```bash
 git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.8.0 .
+  -t huawei-sun2000-gladys:1.9.0 .
 ```
 
 > The `build:image` script adds the `io.gladysassistant.manifest` label: this
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Go to **Integrations** → the **"Install an integration"** button (GitHub).
 2. Unfold the **Developer mode** link.
-3. Paste the image name: `huawei-sun2000-gladys:1.8.0`
+3. Paste the image name: `huawei-sun2000-gladys:1.9.0`
    (the manifest is read automatically from the image labels).
 4. Click **Install**.
 
@@ -178,18 +178,24 @@ production lives in a single widget whose buttons switch the displayed view.
   animates at every poll.
 - **Gauge**: the instant power against the inverter's rated power (read on
   the "Test the connection" action).
-- **DC input** and **internal temperature**.
+- **Today** (daily yield) and **Total yield** (the inverter's lifetime
+  index): live tiles, animated with every read.
+- **Efficiency** and **Grid voltage** (present only while the registers
+  carry them — efficiency reads 0 at night);
 - **Bar chart of the last 7 days**.
 - **Status**: the inverter state (On grid, Standby, Shutdown...) and the
   grid exchange (Importing X kW / Exporting X kW / Balanced) when a Smart
   Power Sensor is installed.
-- **Start / Stop buttons**: the same on/off command as the device switch.
-  ⚠️ Same warning as above: the remote shutdown may be irreversible on
-  some firmwares.
+
+> No start/stop buttons here: a pill cannot show the inverter's current
+> state, which made the control confusing. The state is in the status line,
+> and the on/off control stays on the device page (and in scenes) where its
+> state is visible.
 
 ### "Huawei SUN2000 — Production" — one widget, three views
 
-Three tab-like buttons switch the chart on display:
+Three tab-like buttons switch the chart on display (the active tab is
+highlighted):
 
 - **Day**: the selected day's production **hour by hour** (24 bars), with
   its day total;
@@ -199,10 +205,12 @@ Three tab-like buttons switch the chart on display:
 - **Year**: the selected year **month by month**, with the **previous
   year** alongside.
 
-A **Previous** button steps back one period (day / month / year of the
-active view); clicking the active tab again returns to the current period.
-Navigation stops at the first recorded period (an explicit message beyond);
-after a module restart the view comes back to the current period.
+The chart title shows the displayed period (day, month or year), like the
+date field of the native "Energy Consumption" widget. A **Previous** button
+steps back one period (day / month / year of the active view); clicking the
+active tab again returns to the current period. Navigation stops at the
+first recorded period (an explicit message beyond); after a module restart
+the view comes back to the current period.
 
 ### "Huawei SUN2000 — PV rows" — production per row
 
@@ -211,7 +219,10 @@ shows:
 
 - **one live tile per row** (instant measured power, `String N power` —
   U x I read from registers 32016+);
-- a **7-day bar chart** comparing the estimated energy of each row.
+- two views switched by tab-like buttons: **Hour by hour** (the hourly
+  detail of the selected day, one series per row, 24 bars — the default)
+  and **7 days** (the estimated energy of each row, with **Previous** to
+  step back a day / a week).
 
 ⚠️ **This is an estimate**: the inverter counts no per-row energy. The
 module **integrates the measured power** between polls (× elapsed time);
@@ -275,7 +286,7 @@ off), the live tiles and the gauge are absent and the widget stays readable.
 ### Device and feature names
 
 The device name and its 30 feature names are stored **once** by Gladys:
-there is no per-user translation mechanism for them. Since 1.8.0 they
+there is no per-user translation mechanism for them. Since 1.9.0 they
 default to **English** ("Huawei SUN2000 inverter", "AC power", "Daily
 yield"...). An existing device keeps its stored names: to get the new ones,
 **delete the device** (in Discovery) and create it again — the integration

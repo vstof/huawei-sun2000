@@ -12,6 +12,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
+import { validateWidgetContent } from '@gladysassistant/integration-sdk';
 import {
   resetConnectionCache,
   resetLiveSnapshotForTests,
@@ -43,7 +44,7 @@ const ids = (gladys) => gladys.externalIds('inverter', 'huawei-sun2000');
 
 // --- Minimal register blocks (same encodings as devices.test.js) ---------------
 
-function powerBlock({ acPower = 1950, temperature = 415, status = 0x0200, fault = 0 } = {}) {
+function powerBlock({ acPower = 1950, temperature = 415, efficiency = 9780, gridVoltage = 2300, status = 0x0200, fault = 0 } = {}) {
   const regs = new Uint16Array(27);
   const setI32 = (index, value) => {
     const unsigned = value >>> 0;
@@ -51,7 +52,9 @@ function powerBlock({ acPower = 1950, temperature = 415, status = 0x0200, fault 
     regs[index + 1] = unsigned % 65536;
   };
   setI32(0, 2300); // 32064 DC input, W
+  regs[2] = gridVoltage; // 32066, 0.1 V
   setI32(16, acPower); // 32080 active power, W
+  regs[22] = efficiency; // 32086, 0.01 %
   regs[23] = temperature; // 32087, 0.1 °C
   regs[25] = status; // 32089
   regs[26] = fault; // 32090
@@ -180,7 +183,7 @@ test('the overview widget binds a live tile to the AC power feature', async () =
   assert.equal(gauge.value, 1950);
 });
 
-test('the overview widget shows temperature, DC input and the start/stop buttons', async () => {
+test('the overview widget shows the energy counters, efficiency and grid voltage', async () => {
   const gladys = createFakeGladys();
   await tempStats();
   await seedLive(gladys);
@@ -188,23 +191,18 @@ test('the overview widget shows temperature, DC input and the start/stop buttons
   const content = await overviewWidget(gladys, { language: 'fr' });
 
   const tiles = content.components.filter((c) => c.type === 'value');
-  const temperature = tiles.find((c) => c.unit === '°C');
-  assert.ok(temperature, 'an internal temperature tile');
-  assert.equal(temperature.value, 41.5, 'register 32087 / 10');
-  const dc = tiles.find((c) => c.unit === 'W' && !c.device_feature);
-  assert.equal(dc.value, 2300, 'the DC input power tile');
-
-  const buttons = content.components.filter((c) => c.type === 'button');
-  assert.deepEqual(
-    buttons.map((button) => button.value),
-    [1, 0],
-    'a start and a stop button',
+  const daily = tiles.find((c) => c.label.en === 'Today');
+  assert.equal(daily.device_feature, ids(gladys).feature('daily_yield'), 'the daily yield, live');
+  const total = tiles.find((c) => c.label.en === 'Total yield');
+  assert.equal(total.device_feature, ids(gladys).feature('total_yield'), 'the lifetime index, live');
+  const efficiency = tiles.find((c) => c.unit === '%');
+  assert.equal(efficiency.value, 97.8, 'register 32086 / 100');
+  const grid = tiles.find((c) => c.unit === 'V');
+  assert.equal(grid.value, 230, 'register 32066 / 10');
+  assert.ok(
+    !content.components.some((c) => c.type === 'button'),
+    'no on/off buttons: they cannot show the inverter state',
   );
-  for (const button of buttons) {
-    assert.equal(button.device_feature, ids(gladys).feature('running'));
-  }
-  const stop = buttons.find((button) => button.value === 0);
-  assert.equal(stop.style, 'danger');
 });
 
 test('the overview widget keeps the 7-day series and no period counter tiles', async () => {
@@ -270,8 +268,11 @@ test('the overview widget populates from the poll alone (no test connection need
   assert.ok(gauge, 'a gauge even without the rated power');
   assert.equal(gauge.max, 10000, 'the fallback rated power');
   assert.equal(gauge.value, 1950);
-  const tiles = content.components.filter((c) => c.type === 'value' && !c.device_feature);
-  assert.ok(tiles.some((c) => c.unit === '°C'), 'the temperature tile');
+  const tiles = content.components.filter((c) => c.type === 'value');
+  assert.ok(
+    tiles.some((c) => c.device_feature === ids(gladys).feature('daily_yield')),
+    'the daily yield tile',
+  );
 });
 
 test('the poll books only true hourly deltas (no cumulative lump)', async () => {
@@ -346,7 +347,7 @@ test('the production widget switches to the month view (tabs as buttons)', async
   await recordDaily(addDays(today(), -1), 3.5);
   await recordDaily(today(), 2.0);
 
-  const toast = await productionAction(gladys)('view', { view: 'month' }, { settings: {} });
+  const toast = await productionAction(gladys)('view_month', undefined, { settings: {} });
   assert.match(toast.fr, /mois/);
 
   const content = await productionWidget(gladys, { language: 'fr' });
@@ -381,7 +382,7 @@ test('the production widget switches to the year view', async () => {
   await recordDaily(addDays(today(), -1), 3.0); // closes into the running year
   await recordDaily(today(), 1.0);
 
-  await productionAction(gladys)('view', { view: 'year' }, { settings: {} });
+  await productionAction(gladys)('view_year', undefined, { settings: {} });
   const content = await productionWidget(gladys, { language: 'en' });
 
   const chart = content.components.find((c) => c.type === 'chart');
@@ -417,14 +418,14 @@ test('the production widget navigates back in the current view', async () => {
   const tile = previous.components.find((c) => c.type === 'value');
   assert.equal(tile.value, 4.2, 'yesterday total');
   assert.ok(
-    previous.components.some((c) => c.type === 'text' && /enregistrement a commencé/.test(c.text.fr)),
+    previous.components.some((c) => c.type === 'text' && /Pas de détail horaire/.test(c.text.fr)),
     'no hourly detail for a day recorded before this version',
   );
 
   // The month tab resets the period of the month view.
-  await productionAction(gladys)('view', { view: 'month' }, { settings: {} });
+  await productionAction(gladys)('view_month', undefined, { settings: {} });
   await productionAction(gladys)('nav', { dir: -1 }, { settings: {} });
-  await productionAction(gladys)('view', { view: 'day' }, { settings: {} });
+  await productionAction(gladys)('view_day', undefined, { settings: {} });
   const back = await productionWidget(gladys, { language: 'fr' });
   assert.equal(back.components.find((c) => c.type === 'value').value, 2.0, 'today again');
 });
@@ -447,6 +448,8 @@ test('the production widget cannot navigate before the first recorded day', asyn
 
 // --- Strings (PV rows) widget ------------------------------------------------------
 
+const stringsAction = (gladys) => gladys.handlers[`widgetAction:${WIDGET_KEYS.strings}`];
+
 test('the strings widget shows one live tile per reported row', async () => {
   const gladys = createFakeGladys();
   await tempStats();
@@ -463,16 +466,43 @@ test('the strings widget shows one live tile per reported row', async () => {
   assert.equal(tiles[1].label.fr, 'Rangée 2');
 });
 
-test('the strings widget charts the estimated energy of the last 7 days', async () => {
+test('the strings widget shows the hourly detail per row by default', async () => {
   const gladys = createFakeGladys();
   await tempStats();
+  await seedLive(gladys);
+  await recordStrings(today(), { 1: 9000, 2: 7600 }, 3600000, 12); // 9 + 7.6 kWh at 12:00
+  await recordStrings(today(), { 1: 9000, 2: 7600 }, 1800000, 13); // half an hour at 13:00
+
+  const content = await stringsWidget(gladys, { language: 'en' });
+
+  const chart = content.components.find((c) => c.type === 'chart');
+  assert.ok(chart, 'the hourly chart');
+  assert.equal(chart.series.length, 2, 'one series per row');
+  assert.equal(chart.series[0].points.length, 24, 'one bar per hour');
+  assert.ok(Math.abs(chart.series[0].points[12].v - 9) < 1e-9, 'the 12:00 bucket');
+  assert.ok(Math.abs(chart.series[0].points[13].v - 4.5) < 1e-9, 'the 13:00 bucket');
+  assert.equal(chart.series[0].points.filter((p) => p.v > 0).length, 2, 'the observed hours');
+
+  const buttons = content.components.filter((c) => c.type === 'button');
+  assert.deepEqual(
+    buttons.map((button) => button.label.en),
+    ['Hour by hour', '7 days', 'Previous'],
+  );
+  assert.equal(buttons[0].style, 'primary', 'the active view tab');
+});
+
+test('the strings widget switches to the 7-day view', async () => {
+  const gladys = createFakeGladys();
+  await tempStats();
+  registerWidgets(gladys);
   await seedLive(gladys);
   // Estimated energies for the last days (as the poll would book them).
   for (let offset = -3; offset <= -1; offset += 1) {
     const date = addDays(today(), offset);
-    await recordStrings(date, { 1: 9000, 2: 7600 }, 3600000); // 9 kWh + 7.6 kWh over an hour
+    await recordStrings(date, { 1: 9000, 2: 7600 }, 3600000, 12); // 9 kWh + 7.6 kWh over an hour
   }
 
+  await stringsAction(gladys)('view_week', undefined, { settings: {} });
   const content = await stringsWidget(gladys, { language: 'en' });
 
   const chart = content.components.find((c) => c.type === 'chart');
@@ -482,7 +512,7 @@ test('the strings widget charts the estimated energy of the last 7 days', async 
   assert.equal(chart.series[0].points.length, 7, 'the last 7 days');
   const observed = chart.series[0].points.filter((point) => point.v > 0);
   assert.equal(observed.length, 3, 'only the observed days');
-  assert.ok(Math.abs(observed[0].v - 9) < 1e-9, 'W x ms / 3.6e6 = kWh');
+  assert.ok(Math.abs(observed[0].v - 9) < 1e-9, 'W x ms / 3.6e9 = kWh');
   const caption = content.components.find((c) => c.type === 'text');
   assert.match(caption.text.en, /Estimated/, 'the estimate is spelled out');
 });
@@ -521,6 +551,35 @@ test('every text of the widgets is a multi-language object or a plain string', a
   }
 });
 
+test('every widget content renders exactly as sent (core validator)', async () => {
+  // The killer regression test: the core drops what it cannot render —
+  // notably buttons sharing an action key (what made the tab row vanish).
+  const gladys = createFakeGladys();
+  await tempStats();
+  registerWidgets(gladys);
+  await seedLive(gladys, { statsDays: 5 });
+  await recordStrings(today(), { 1: 9000, 2: 7600 }, 3600000, 12);
+  for (let offset = -3; offset <= -1; offset += 1) {
+    await recordStrings(addDays(today(), offset), { 1: 9000, 2: 7600 }, 3600000, 12);
+  }
+
+  const contents = [
+    await overviewWidget(gladys, { language: 'fr' }),
+    await productionWidget(gladys, { language: 'fr' }), // day view
+    await stringsWidget(gladys, { language: 'fr' }), // hourly view
+  ];
+  await productionAction(gladys)('view_month', undefined, { settings: {} });
+  contents.push(await productionWidget(gladys, { language: 'fr' }));
+  await productionAction(gladys)('view_year', undefined, { settings: {} });
+  contents.push(await productionWidget(gladys, { language: 'fr' }));
+  await stringsAction(gladys)('view_week', undefined, { settings: {} });
+  contents.push(await stringsWidget(gladys, { language: 'fr' }));
+
+  for (const [index, content] of contents.entries()) {
+    assert.deepEqual(validateWidgetContent(content), [], `content #${index} renders as sent`);
+  }
+});
+
 test('registerWidgets hooks the widget and action keys on the SDK', () => {
   const gladys = createFakeGladys();
   registerWidgets(gladys);
@@ -528,6 +587,7 @@ test('registerWidgets hooks the widget and action keys on the SDK', () => {
     assert.ok(typeof gladys.handlers[`widget:${key}`] === 'function');
   }
   assert.ok(typeof gladys.handlers[`widgetAction:${WIDGET_KEYS.production}`] === 'function');
+  assert.ok(typeof gladys.handlers[`widgetAction:${WIDGET_KEYS.strings}`] === 'function');
 });
 
 test('feature names are stored in the language of the integration (en by default)', () => {

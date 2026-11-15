@@ -2,6 +2,38 @@
 
 All notable changes to this integration are documented here.
 
+## [1.9.0]
+
+### Fixed
+
+- **The production widget's tab buttons were dropped by the core**: buttons
+  sharing the same `action.key` inside one content are rejected
+  ("duplicate action key") — the three tabs all declared `view`. Each button
+  now carries its own key (`view_day` / `view_month` / `view_year`, and
+  `view_hourly` / `view_week` on the strings widget). A test now runs every
+  widget content through the SDK's `validateWidgetContent` — the exact
+  rules the Gladys core applies — so a content the core would silently trim
+  or drop fails the build.
+
+### Added
+
+- **Overview widget**: the requested indicators — `Today` (daily yield),
+  `Total yield` (the lifetime index), `Efficiency` and `Grid voltage` —
+  next to the live AC tile and the gauge. The day/month/year counters stay
+  out (they live in the production widget).
+- **Strings widget**: a **hour-by-hour view** of the selected day (one
+  series per row, 24 bars) alongside the 7-day view, switched by tab-like
+  buttons; the hourly profile per row is accumulated from the power delta
+  of every poll (same honest model: offline gaps are not counted).
+
+### Changed
+
+- **The overview no longer carries the Start / Stop buttons**: a pill
+  cannot show the inverter state, which made the control confusing. The
+  state stays in the status line; the on/off control remains on the device
+  page (and in scenes) where its state is visible.
+- `huawei-sun2000-gladys:1.9.0` image.
+
 ## [1.8.0]
 
 ### Added
@@ -24,7 +56,7 @@ All notable changes to this integration are documented here.
 - The production widget replaces the three separate `huawei_day` /
   `huawei_month` / `huawei_year` widgets (manifest now: overview, production,
   strings).
-- `huawei-sun2000-gladys:1.8.0` image.
+- `huawei-sun2000-gladys:1.9.0` image.
 
 ## [1.7.0]
 
@@ -50,7 +82,7 @@ All notable changes to this integration are documented here.
 
 - The statistics file is versioned (`version: 2`): a version-1 file is
   migrated on load, its daily and monthly history is kept.
-- `huawei-sun2000-gladys:1.8.0` image.
+- `huawei-sun2000-gladys:1.9.0` image.
 
 ### Added (content of the unpublished 1.4.0 / 1.5.0 local releases)
 

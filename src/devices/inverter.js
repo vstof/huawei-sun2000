@@ -225,6 +225,7 @@ const liveSnapshot = {
   dailyKwh: null,
   totalKwh: null,
   meterPower: null,
+  gridVoltage: null,
   // Per-string DC power as measured (U x I): { 1: W, 2: W } — rows the
   // inverter reports with a non-zero voltage only.
   stringPowers: null,
@@ -287,6 +288,8 @@ function updateLiveSnapshot({ identity, power, energy, meter, strings } = {}) {
     liveSnapshot.efficiency = efficiency > 0 && efficiency <= 100 ? efficiency : null;
     const temperature = i16(power, 23) / 10; // 32087, °C
     liveSnapshot.temperature = temperature > -50 && temperature < 150 ? temperature : null;
+    const gridVoltage = u16(power, 2) / 10; // 32066, V (0 = invalid on this output mode)
+    liveSnapshot.gridVoltage = gridVoltage > 0 ? gridVoltage : null;
     liveSnapshot.status = STATUS_CODES.get(u16(power, 25)) ?? 'unknown';
     liveSnapshot.fault = u16(power, 26);
   }
@@ -682,7 +685,7 @@ export const inverter = {
           }
         }
         try {
-          await recordStrings(localDate(), powers, elapsed);
+          await recordStrings(localDate(), powers, elapsed, new Date().getHours());
         } catch (statsError) {
           logger.debug(`String statistics update failed: ${statsError.message}`);
         }
