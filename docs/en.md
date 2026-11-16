@@ -7,7 +7,7 @@ directly from your local network, with no cloud.
 
 - Reads the **production**: AC power, DC input power, day peak, daily energy,
   total energy.
-- Reads the **PV strings** (1 to 4): voltage and current of each string.
+- Reads the **PV lines** (1 to 4): voltage and current of each line.
 - Reads the **grid side**: voltages (A-B / B-C / C-A), phase currents, reactive
   power, power factor, frequency.
 - Reads the inverter state: status (standby, starting, on-grid, shut down...),
@@ -117,7 +117,7 @@ Without Node (a Raspberry Pi for instance), with `jq` (`sudo apt install jq`):
 ```bash
 git clone <this-repo> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.9.0 .
+  -t huawei-sun2000-gladys:1.10.0 .
 ```
 
 > The `build:image` script adds the `io.gladysassistant.manifest` label: this
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Go to **Integrations** → the **"Install an integration"** button (GitHub).
 2. Unfold the **Developer mode** link.
-3. Paste the image name: `huawei-sun2000-gladys:1.9.0`
+3. Paste the image name: `huawei-sun2000-gladys:1.10.0`
    (the manifest is read automatically from the image labels).
 4. Click **Install**.
 
@@ -145,7 +145,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
    (English name by default — see "Device and feature names" below), then
    place it in a room.
 
-The features your installation does not carry (strings 3-4 on a two-input
+The features your installation does not carry (lines 3-4 on a two-input
 model, grid meter without a Smart Power Sensor, B-C and C-A voltages on a
 single-phase model) stay silent: no value is fabricated.
 
@@ -199,11 +199,10 @@ highlighted):
 
 - **Day**: the selected day's production **hour by hour** (24 bars), with
   its day total;
-- **Month**: the selected month **day by day**, with the **same month of
-  the previous year** drawn alongside (same positions, easy comparison) and
-  the list of the running year's months;
-- **Year**: the selected year **month by month**, with the **previous
-  year** alongside.
+- **Month**: the **last 12 months** as bars (one per month, even those
+  without production, shown as 0), with their total;
+- **Year**: the **last 5 years** as bars (one per year, annual total), to
+  compare several years side by side.
 
 The chart title shows the displayed period (day, month or year), like the
 date field of the native "Energy Consumption" widget. A **Previous** button
@@ -212,12 +211,12 @@ active tab again returns to the current period. Navigation stops at the
 first recorded period (an explicit message beyond); after a module restart
 the view comes back to the current period.
 
-### "Huawei SUN2000 — PV rows" — production per row
+### "Huawei SUN2000 — PV lines" — production per row
 
 If your installation has **several panel rows** (strings), this widget
 shows:
 
-- **one live tile per row** (instant measured power, `String N power` —
+- **one live tile per row** (instant measured power, `Line N power` —
   U x I read from registers 32016+);
 - two views switched by tab-like buttons: **Hour by hour** (the hourly
   detail of the selected day, one series per row, 24 bars — the default)
@@ -234,11 +233,11 @@ observed. The total DC power remains a direct inverter measurement.
 A zero reading is **never published**: an absent measurement beats a
 fabricated 0 V. The cases you may hit:
 
-- **At night or in standby**: without irradiation the strings read 0 V —
+- **At night or in standby**: without irradiation the lines read 0 V —
   the row voltages / currents / powers are empty. Normal;
 - **Single-phase model**: B-C and C-A voltages do not physically exist —
   those two measures stay empty forever. Normal;
-- **Strings block refused by the firmware**: on some firmwares (notably the
+- **Lines block refused by the firmware**: on some firmwares (notably the
   built-in Wi-Fi), block 32016+8 is not served — every row measure is then
   empty **even in full daylight**. Visible in the integration logs as
   `Block 32016+8 not available`;
@@ -286,7 +285,7 @@ off), the live tiles and the gauge are absent and the widget stays readable.
 ### Device and feature names
 
 The device name and its 30 feature names are stored **once** by Gladys:
-there is no per-user translation mechanism for them. Since 1.9.0 they
+there is no per-user translation mechanism for them. Since 1.10.0 they
 default to **English** ("Huawei SUN2000 inverter", "AC power", "Daily
 yield"...). An existing device keeps its stored names: to get the new ones,
 **delete the device** (in Discovery) and create it again — the integration

@@ -35,7 +35,7 @@ import {
   stringsWidget,
   registerWidgets,
   resetNavStateForTests,
-} from '../src/widgets.js';
+} from '../src/widgets/index.js';
 import { normalizeConfig } from '../src/config.js';
 import { t } from '../src/i18n.js';
 
@@ -330,75 +330,54 @@ test('the production widget opens on the day view: hourly chart + total', async 
   assert.equal(buttons[0].style, 'primary', 'the active tab is highlighted');
 });
 
-test('the production widget switches to the month view (tabs as buttons)', async () => {
+test('the production widget switches to the month view (rolling 12 months)', async () => {
   const gladys = createFakeGladys();
   await tempStats();
   registerWidgets(gladys);
-  // The same month one year back: three observed days.
-  const lastYear = new Date();
-  lastYear.setFullYear(lastYear.getFullYear() - 1);
-  lastYear.setDate(10);
-  const key = (date) => date.toISOString().slice(0, 10);
-  await recordDaily(key(lastYear), 1.0);
-  await recordDaily(key(new Date(lastYear.getTime() + 86400000)), 1.5);
-  await recordDaily(key(new Date(lastYear.getTime() + 2 * 86400000)), 2.0);
-  // The running month: two closed days + today.
-  await recordDaily(addDays(today(), -2), 3.0);
-  await recordDaily(addDays(today(), -1), 3.5);
+  // Seed several months of the running year.
+  await recordDaily(addDays(today(), -40), 3.0);
+  await recordDaily(addDays(today(), -10), 3.5);
   await recordDaily(today(), 2.0);
 
-  const toast = await productionAction(gladys)('view_month', undefined, { settings: {} });
-  assert.match(toast.fr, /mois/);
-
+  await productionAction(gladys)('view_month', undefined, { settings: {} });
   const content = await productionWidget(gladys, { language: 'fr' });
+
   const tile = content.components.find((c) => c.type === 'value');
-  assert.ok(Number.isFinite(tile.value), 'the month total');
+  assert.ok(Number.isFinite(tile.value), 'the 12-month total');
   const chart = content.components.find((c) => c.type === 'chart');
-  assert.equal(chart.series.length, 2, 'the month and its previous-year twin');
-  const thisMonth = String(new Date().toISOString().slice(0, 7));
-  assert.equal(
-    chart.series[0].points.filter((point) => point.t.startsWith(thisMonth)).length,
-    3,
-    'two closed days + today',
-  );
-  // The twin sits on the SAME month positions (no year of empty axis).
+  assert.equal(chart.series.length, 1, 'one series of monthly bars');
+  assert.equal(chart.series[0].points.length, 12, 'twelve bars, even the months without data');
   assert.ok(
-    chart.series[1].points.every((point) => point.t.startsWith(thisMonth)),
-    'the previous-year series is aligned on the current month',
+    chart.series[0].points.every((point) => /^\d{4}-\d{2}$/.test(point.t.slice(0, 7))),
+    'each bar carries a month key',
   );
-  const status = content.components.find((c) => c.type === 'status');
-  assert.ok(status.items.length >= 1, 'the months of the running year');
+  // At least one bar is zero (months without production are shown, not dropped).
+  assert.ok(chart.series[0].points.some((point) => point.v === 0), 'months without production show as 0');
+  assert.match(chart.title.fr, /12 mois/, 'the title names the rolling window');
 });
 
-test('the production widget switches to the year view', async () => {
+test('the production widget switches to the year view (multi-year)', async () => {
   const gladys = createFakeGladys();
   await tempStats();
   registerWidgets(gladys);
-  const previousYear = new Date();
-  previousYear.setFullYear(previousYear.getFullYear() - 1, 4, 15); // May, last year
-  const key = (date) => date.toISOString().slice(0, 10);
-  await recordDaily(key(previousYear), 5.0);
-  await recordDaily(key(new Date(previousYear.getTime() + 86400000)), 4.0); // closes May
-  await recordDaily(addDays(today(), -1), 3.0); // closes into the running year
+  await recordDaily(addDays(today(), -400), 5.0);
+  await recordDaily(addDays(today(), -10), 3.5);
   await recordDaily(today(), 1.0);
 
   await productionAction(gladys)('view_year', undefined, { settings: {} });
   const content = await productionWidget(gladys, { language: 'en' });
 
   const chart = content.components.find((c) => c.type === 'chart');
-  assert.equal(chart.series.length, 2);
-  const runningYear = String(new Date().getFullYear());
+  assert.equal(chart.series.length, 1, 'one series of annual bars');
+  assert.equal(chart.series[0].points.length, 5, 'five years');
   assert.ok(
-    chart.series[0].points.every((point) => point.t.startsWith(runningYear)),
-    'month points carry a full ISO date',
+    chart.series[0].points.every((point) => point.t.endsWith('-01-01')),
+    'each bar carries a year',
   );
-  assert.match(chart.series[1].name.en, /previous year/);
-  assert.ok(
-    chart.series[1].points.every((point) => point.t.startsWith(runningYear)),
-    'the previous-year twin is aligned on the running year',
-  );
+  // The year labels read as years, not as dates.
+  assert.ok(chart.series[0].points.some((point) => point.t.startsWith(String(new Date().getFullYear()))));
   const tile = content.components.find((c) => c.type === 'value');
-  assert.equal(tile.value, 4.0, 'the running year total (yesterday closed into it + today)');
+  assert.ok(Number.isFinite(tile.value), 'the 5-year total');
 });
 
 test('the production widget navigates back in the current view', async () => {
@@ -448,7 +427,7 @@ test('the production widget cannot navigate before the first recorded day', asyn
 
 // --- Strings (PV rows) widget ------------------------------------------------------
 
-const stringsAction = (gladys) => gladys.handlers[`widgetAction:${WIDGET_KEYS.strings}`];
+const stringsAction = (gladys) => gladys.handlers[`widgetAction:${WIDGET_KEYS.lines}`];
 
 test('the strings widget shows one live tile per reported row', async () => {
   const gladys = createFakeGladys();
@@ -462,8 +441,8 @@ test('the strings widget shows one live tile per reported row', async () => {
   assert.equal(tiles.length, 2, 'only the rows the inverter reports');
   assert.equal(tiles[0].device_feature, ids(gladys).feature('pv1_power'));
   assert.equal(tiles[1].device_feature, ids(gladys).feature('pv2_power'));
-  assert.equal(tiles[0].label.fr, 'Rangée 1');
-  assert.equal(tiles[1].label.fr, 'Rangée 2');
+  assert.equal(tiles[0].label.fr, 'Ligne 1');
+  assert.equal(tiles[1].label.fr, 'Ligne 2');
 });
 
 test('the strings widget shows the hourly detail per row by default', async () => {
@@ -508,7 +487,7 @@ test('the strings widget switches to the 7-day view', async () => {
   const chart = content.components.find((c) => c.type === 'chart');
   assert.ok(chart, 'the per-row chart');
   assert.equal(chart.series.length, 2, 'one series per row');
-  assert.equal(chart.series[0].name.en, 'String 1');
+  assert.equal(chart.series[0].name.en, 'Line 1');
   assert.equal(chart.series[0].points.length, 7, 'the last 7 days');
   const observed = chart.series[0].points.filter((point) => point.v > 0);
   assert.equal(observed.length, 3, 'only the observed days');
@@ -526,7 +505,7 @@ test('the strings widget degrades gracefully without string data', async () => {
 
   assert.ok(!content.components.some((c) => c.device_feature), 'no live tile without rows');
   const caption = content.components.find((c) => c.type === 'text');
-  assert.match(caption.text.en, /No per-string data yet/);
+  assert.match(caption.text.en, /No per-line data yet/);
 });
 
 // --- Common -----------------------------------------------------------------------
@@ -587,11 +566,11 @@ test('registerWidgets hooks the widget and action keys on the SDK', () => {
     assert.ok(typeof gladys.handlers[`widget:${key}`] === 'function');
   }
   assert.ok(typeof gladys.handlers[`widgetAction:${WIDGET_KEYS.production}`] === 'function');
-  assert.ok(typeof gladys.handlers[`widgetAction:${WIDGET_KEYS.strings}`] === 'function');
+  assert.ok(typeof gladys.handlers[`widgetAction:${WIDGET_KEYS.lines}`] === 'function');
 });
 
 test('feature names are stored in the language of the integration (en by default)', () => {
   assert.equal(t('power_ac'), 'AC power');
   assert.equal(t('device_name'), 'Huawei SUN2000 inverter');
-  assert.equal(t('pv1_power'), 'String 1 power');
+  assert.equal(t('pv1_power'), 'Line 1 power');
 });

@@ -18,7 +18,7 @@
 import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { normalizeConfig } from './src/config.js';
 import { t, bilingual } from './src/i18n.js';
-import { registerWidgets } from './src/widgets.js';
+import { registerWidgets } from './src/widgets/index.js';
 import {
   DEVICE_BLUEPRINTS,
   buildDiscoveredDevices,

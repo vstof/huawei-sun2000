@@ -2,6 +2,22 @@
 
 All notable changes to this integration are documented here.
 
+## [1.10.0]
+
+### Added
+
+- **Month view is now a rolling 12-month chart**: 12 bars, one per month,
+  even the months with no production (shown as 0), with a "Previous" button
+  to step the window back one month.
+- **Year view is now a multi-year chart**: one bar per year (annual total),
+  5 years, to compare several years side by side, with the same navigation.
+
+### Changed
+
+- The month view no longer shows the day-by-day of a single month (the Day
+  view covers that); it is now the rolling 12-month comparison.
+- `huawei-sun2000-gladys:1.10.0` image.
+
 ## [1.9.0]
 
 ### Fixed
@@ -32,7 +48,7 @@ All notable changes to this integration are documented here.
   cannot show the inverter state, which made the control confusing. The
   state stays in the status line; the on/off control remains on the device
   page (and in scenes) where its state is visible.
-- `huawei-sun2000-gladys:1.9.0` image.
+- `huawei-sun2000-gladys:1.10.0` image.
 
 ## [1.8.0]
 
@@ -56,7 +72,7 @@ All notable changes to this integration are documented here.
 - The production widget replaces the three separate `huawei_day` /
   `huawei_month` / `huawei_year` widgets (manifest now: overview, production,
   strings).
-- `huawei-sun2000-gladys:1.9.0` image.
+- `huawei-sun2000-gladys:1.10.0` image.
 
 ## [1.7.0]
 
@@ -82,7 +98,7 @@ All notable changes to this integration are documented here.
 
 - The statistics file is versioned (`version: 2`): a version-1 file is
   migrated on load, its daily and monthly history is kept.
-- `huawei-sun2000-gladys:1.9.0` image.
+- `huawei-sun2000-gladys:1.10.0` image.
 
 ### Added (content of the unpublished 1.4.0 / 1.5.0 local releases)
 

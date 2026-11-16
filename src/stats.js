@@ -540,3 +540,32 @@ export async function monthsOfYear(yearKey) {
   }
   return result.sort((a, b) => (a.month < b.month ? -1 : 1));
 }
+
+/**
+ * A rolling window of the last `count` months, oldest first, with 0 kWh for
+ * the months that were never observed (the user wants to see all of them).
+ * @param {number} count
+ */
+export async function monthsRolling(count) {
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const result = [];
+  for (let offset = -(count - 1); offset <= 0; offset += 1) {
+    const month = addMonths(currentMonth, offset);
+    const kwh = (await monthTotal(month)) ?? 0;
+    result.push({ month, kwh });
+  }
+  return result;
+}
+
+export async function yearsRolling(count) {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const result = [];
+  for (let offset = -(count - 1); offset <= 0; offset += 1) {
+    const year = String(currentYear + offset);
+    const kwh = (await yearTotal(year)) ?? 0;
+    result.push({ year, kwh });
+  }
+  return result;
+}

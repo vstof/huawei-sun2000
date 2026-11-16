@@ -5,7 +5,7 @@ SUN2000**, supervisés en local via leur interface **Modbus TCP** (dongle Wi-Fi 
 Smart Dongle, port 502).
 
 - Lecture : puissance AC, puissance DC, crête du jour, énergies (jour, totale),
-  tensions/courants des strings PV, tensions réseau, courants de phase,
+  tensions/courants des lignes PV, tensions réseau, courants de phase,
   puissance réactive, facteur de puissance, fréquence, rendement, température
   interne, état de l'onduleur, code d'anomalie.
 - Lecture du **compteur Smart Power Sensor** (DTSU666) quand il est installé :
@@ -22,10 +22,10 @@ Smart Dongle, port 502).
 - **Trois widgets de tableau de bord** : aperçu temps réel (puissance AC
   vivante, jauge vs nominale, production du jour, production totale,
   rendement, tension réseau, 7 derniers jours, état + réseau), production
-  dans un **seul widget à onglets** (Jour heure par heure / Mois jour par
-  jour + mois de l'année précédente / Année mois par mois + année
-  précédente), et **rangées PV** (tuiles vivantes par string, vue heure
-  par heure + vue 7 jours de l'énergie estimée par rangée).
+  dans un **seul widget à onglets** (Jour heure par heure / Mois : 12
+  derniers mois en barres / Année : 5 dernières années en barres), et
+  **lignes PV** (tuiles vivantes par ligne, vue heure par heure + vue
+  7 jours de l'énergie estimée par ligne).
 - **Statistiques jour / mois / année (+ détail horaire)** cumulées
   localement sous `/data` (les jours non observés ne sont pas inventés).
 
@@ -93,7 +93,7 @@ npm run build:image     # docker build + étiquette io.gladysassistant.manifest
 > donnerait `MANIFEST_NOT_FOUND`.
 
 Puis dans Gladys : **Intégrations → Installer une intégration → Mode développeur →
-image Docker** `huawei-sun2000-gladys:1.9.0`. Détails dans [`docs/fr.md`](docs/fr.md).
+image Docker** `huawei-sun2000-gladys:1.10.0`. Détails dans [`docs/fr.md`](docs/fr.md).
 
 ## Publier le dépôt GitHub (mainteneur)
 
@@ -102,7 +102,7 @@ manifeste doit être à la racine du dépôt par défaut) :
 
 ```bash
 cd huawei-sun2000
-git init && git add -A && git commit -m "Huawei SUN2000 integration 1.9.0"
+git init && git add -A && git commit -m "Huawei SUN2000 integration 1.10.0"
 git remote add origin git@github.com:<votre-compte>/gladys-huawei-sun2000.git
 git push -u origin main        # ou master, selon la branche créée
 ```
@@ -129,7 +129,7 @@ automatiquement sur ghcr.io à chaque push :
    et une image privée est refusée au pull anonyme).
 3. Mettre à jour `docker_image` dans `gladys-assistant-integration.json` :
    ```json
-   "docker_image": "ghcr.io/<votre-compte>/gladys-huawei-sun2000:1.9.0"
+   "docker_image": "ghcr.io/<votre-compte>/gladys-huawei-sun2000:1.10.0"
    ```
    puis commit + push (les tests vérifient la cohérence version/manifeste, le
    workflow republie l'image au même tag).

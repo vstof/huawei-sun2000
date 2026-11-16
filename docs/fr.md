@@ -7,7 +7,7 @@ directement depuis votre réseau local, sans cloud.
 
 - Lit la **production** : puissance AC, puissance d'entrée DC, crête du jour,
   énergie du jour, énergie totale.
-- Lit les **strings PV** (1 à 4) : tension et courant de chaque string.
+- Lit les **lignes PV** (1 à 4) : tension et courant de chaque ligne.
 - Lit le **réseau** : tensions (A-B / B-C / C-A), courants de phase, puissance
   réactive, facteur de puissance, fréquence.
 - Lit l'état de l'onduleur : état (veille, démarrage, connecté, arrêté...),
@@ -117,7 +117,7 @@ Sans Node (Raspberry Pi par exemple), avec `jq` (`sudo apt install jq`) :
 ```bash
 git clone <ce-dépôt> huawei-sun2000 && cd huawei-sun2000
 docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-integration.json)" \
-  -t huawei-sun2000-gladys:1.9.0 .
+  -t huawei-sun2000-gladys:1.10.0 .
 ```
 
 > Le script `build:image` ajoute l'étiquette `io.gladysassistant.manifest` :
@@ -128,7 +128,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 
 1. Allez dans **Intégrations** → bouton **« Installer une intégration »** (GitHub).
 2. Dépliez le lien **Mode développeur**.
-3. Collez le nom d'image : `huawei-sun2000-gladys:1.9.0`
+3. Collez le nom d'image : `huawei-sun2000-gladys:1.10.0`
    (le manifeste est lu automatiquement dans les étiquettes de l'image).
 4. Cliquez sur **Installer**.
 
@@ -144,7 +144,7 @@ docker build --label "io.gladysassistant.manifest=$(jq -c . gladys-assistant-int
 3. Allez dans **Découverte**, créez l'appareil **« Onduleur Huawei SUN2000 »**,
    puis placez-le dans une pièce.
 
-Les fonctionnalités absentes de votre installation (strings 3-4 sur un modèle
+Les fonctionnalités absentes de votre installation (lignes 3-4 sur un modèle
 deux entrées, compteur réseau sans Smart Power Sensor, tensions B-C et C-A sur
 un modèle monophasé) restent silencieuses : aucune valeur n'est fabriquée.
 
@@ -191,11 +191,10 @@ surligné, en couleur) :
 
 - **Jour** : la production du jour sélectionné **heure par heure**
   (24 barres), avec son total du jour ;
-- **Mois** : la production du mois sélectionné **jour par jour**, avec le
-  **même mois de l'année précédente** dessiné à côté (sur les mêmes
-  positions, pour comparer) et la liste des mois de l'année en cours ;
-- **Année** : la production de l'année sélectionnée **mois par mois**, avec
-  **l'année précédente** à côté.
+- **Mois** : les **12 derniers mois** en barres (un par mois, même ceux
+  sans production, affichés à 0), avec leur total ;
+- **Année** : les **5 dernières années** en barres (un par année, total
+  annuel), pour comparer plusieurs années côte à côte.
 
 Le titre du graphique indique la période affichée (jour, mois ou année),
 comme le sélecteur de date du widget natif « Consommation d'énergie ».
@@ -205,13 +204,13 @@ navigation s'arrête à la première période enregistrée (message explicite
 au-delà) ; après un redémarrage du module, la vue revient à la période
 courante.
 
-### « Huawei SUN2000 — Rangées PV » — production par rangée
+### « Huawei SUN2000 — Lignes PV » — production par rangée
 
 Si votre installation a **plusieurs rangées de panneaux** (strings), ce
 widget montre :
 
 - une **tuile vivante par rangée** (puissance instantanée mesurée,
-  `String N power` — U × I relevés dans les registres 32016+) ;
+  `Ligne N puissance` — U × I relevés dans les registres 32016+) ;
 - deux vues commutées par boutons-onglets : **Heure par heure** (le détail
   horaire du jour sélectionné, une série par rangée, 24 barres — défaut) et
   **7 jours** (l'énergie estimée de chaque rangée, avec **Précédent** pour
@@ -228,11 +227,11 @@ elle, reste une mesure directe de l'onduleur.
 Les valeurs nulles ne sont **jamais publiées** : mieux vaut une mesure
 absente qu'un 0 V fabriqué. Cas rencontrés :
 
-- **La nuit ou en veille** : sans irradiation, les strings lisent 0 V —
+- **La nuit ou en veille** : sans irradiation, les lignes lisent 0 V —
   les tensions/courants/puissances des rangées sont vides. Normal ;
 - **Modèle monophasé** : les tensions B-C et C-A n'existent pas
   physiquement — ces deux mesures resteront toujours vides. Normal ;
-- **Bloc strings refusé par le firmware** : sur certains firmwares (notamment
+- **Bloc des lignes refusé par le firmware** : sur certains firmwares (notamment
   Wi-Fi intégré), le bloc 32016+8 n'est pas servi — toutes les mesures de
   rangée sont alors vides **même en pleine journée**. Vérifiable dans les
   logs d'intégration : `Block 32016+8 not available` ;
@@ -283,7 +282,7 @@ absentes et le widget reste lisible.
 
 Les noms du device et de ses 30 mesures sont stockés **une seule fois** par
 Gladys : il n'existe pas de mécanisme de traduction par utilisateur pour
-eux. Depuis la 1.9.0 ils sont en **anglais** par défaut (« Huawei SUN2000
+eux. Depuis la 1.10.0 ils sont en **anglais** par défaut (« Huawei SUN2000
 inverter », « AC power », « Daily yield »...). Votre appareil existant garde
 ses libellés actuels : pour obtenir les nouveaux, **supprimez l'appareil**
 (dans Découverte) puis recréez-le — l'intégration le redécouvre avec les
@@ -303,7 +302,7 @@ widgets** — est fourni en deux langues et suit la langue de votre compte.
 | « Tester la connexion » échoue en connection refused | Le port 502 n'est pas ouvert : vérifiez l'activation du protocole |
 | Connexion OK mais valeurs absentes | Mauvaise adresse esclave : essayez `1` dans la configuration |
 | Le compteur réseau ne publie rien | Aucun Smart Power Sensor installé, ou son statut n'est pas « normal » |
-| Les strings 3-4 n'apparaissent jamais | Votre modèle n'a que 2 entrées PV : normal |
+| Les lignes 3-4 n'apparaissent jamais | Votre modèle n'a que 2 entrées PV : normal |
 | La commande marche/arrêt échoue : « l'onduleur a refusé la commande » | La plupart des firmwares récents exigent des **droits installateur** pour ces écritures (exception Modbus « illegal data address ») : passez par FusionSolar avec le compte installateur, ou activez la configuration « autoriser les commandes à distance » côté installateur |
 | « Tester la connexion » ne répond plus le soir | L'onduleur est en veille sans irradiation : les registres restent lisibles, vérifiez plutôt le Wi-Fi du dongle |
 | Plusieurs intégrations se disputent le port 502 | Le dongle ne sert qu'**un seul maître Modbus** : ne lisez pas les registres depuis deux outils à la fois |
